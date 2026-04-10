@@ -1,0 +1,32 @@
+{
+  "name": "pi-session-browser",
+  "version": "0.1.0",
+  "description": "Local web UI for exploring, searching, and distilling pi sessions",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/omaclaren/pi-session-browser.git"
+  },
+  "keywords": [
+    "pi",
+    "pi-session",
+    "session-browser",
+    "search",
+    "knowledge-management"
+  ],
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.4.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.3.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.3"
+  }
+}

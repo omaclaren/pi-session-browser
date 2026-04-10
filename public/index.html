@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>pi session browser</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>pi session browser</h1>
+        <p class="muted">Search, preview, and distill your local pi sessions.</p>
+      </div>
+      <div class="topbar-actions">
+        <input id="search" type="search" placeholder="Search sessions... (supports label: and project:)">
+        <button id="refresh">Refresh</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="panel sidebar">
+        <div class="panel-header">
+          <h2>Projects</h2>
+          <span id="stats" class="muted small"></span>
+        </div>
+        <div id="projects" class="list"></div>
+      </aside>
+
+      <section class="panel sessions-panel">
+        <div class="panel-header">
+          <h2>Sessions</h2>
+          <span id="session-count" class="muted small"></span>
+        </div>
+        <div id="sessions" class="list sessions"></div>
+      </section>
+
+      <section class="panel detail-panel">
+        <div id="detail-empty" class="empty-state">
+          <h2>Select a session</h2>
+          <p>Use the search box or choose a project to explore your session archive.</p>
+        </div>
+        <div id="detail" class="detail hidden"></div>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
