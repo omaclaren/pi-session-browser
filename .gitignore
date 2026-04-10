@@ -1,5 +1,6 @@
 node_modules/
 .cache/
 distills/
+context/
 *.log
 .DS_Store

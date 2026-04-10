@@ -6,6 +6,7 @@ const state = {
   selectedSessionDetail: null,
   query: "",
   distillDir: "",
+  conversationMode: "timeline",
   treeMode: "all",
   focusedTreeNodeId: null,
 };
@@ -21,12 +22,138 @@ const els = {
   detailEmpty: document.querySelector("#detail-empty"),
 };
 
+const appliedThemeVariables = new Set();
+
 function escapeHtml(text = "") {
   return text
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function normalizeWhitespace(text = "") {
+  return String(text).replace(/\s+/g, " ").trim();
+}
+
+function truncateText(text = "", maxLength = 120) {
+  const normalized = normalizeWhitespace(text);
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function comparableText(text = "") {
+  return normalizeWhitespace(text)
+    .toLowerCase()
+    .replaceAll("…", "")
+    .replace(/[‘’']/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function isHomeLikeCwd(cwd = "") {
+  const normalized = normalizeWhitespace(cwd);
+  return /^\/Users\/[^/]+\/?$/.test(normalized)
+    || /^\/home\/[^/]+\/?$/.test(normalized)
+    || /^[A-Za-z]:\\Users\\[^\\]+\\?$/.test(normalized);
+}
+
+function derivePromptTitle(firstPrompt = "") {
+  const normalized = normalizeWhitespace(firstPrompt);
+  if (!normalized) return "";
+
+  let title = normalized
+    .replace(/^Output a bash one-liner between <cmd> and <\/cmd> tags to:\s*/i, "")
+    .replace(/^Output ONLY the shell command\. No markdown, no backticks, no explanation\. Just the raw command\.\s*/i, "")
+    .replace(/^(?:hi|hello|hey)[,!\s]+/i, "")
+    .replace(/^(?:can|could|would|will)\s+you\s+/i, "")
+    .replace(/^(?:please\s+)?(?:just\s+)?/i, "")
+    .replace(/[?.!]+$/g, "")
+    .trim();
+
+  if (!title) title = normalized;
+  title = title.charAt(0).toUpperCase() + title.slice(1);
+  return truncateText(title, 72);
+}
+
+function isPromptDerivedSessionName(sessionName, firstPrompt) {
+  const comparableName = comparableText(sessionName);
+  const comparablePrompt = comparableText(firstPrompt);
+  if (!comparableName || !comparablePrompt) return false;
+  if (comparableName === comparablePrompt) return true;
+
+  const [shorter, longer] = comparableName.length <= comparablePrompt.length
+    ? [comparableName, comparablePrompt]
+    : [comparablePrompt, comparableName];
+
+  return shorter.length >= 24 && longer.startsWith(shorter);
+}
+
+function getSessionDisplay(session) {
+  const sessionName = normalizeWhitespace(session.sessionName || "");
+  const firstPrompt = normalizeWhitespace(session.firstUserPrompt || "");
+  const projectLabel = normalizeWhitespace(session.projectLabel || "");
+  const informativeProject = projectLabel && !isHomeLikeCwd(session.cwd || "");
+  const promptDerivedName = sessionName && isPromptDerivedSessionName(sessionName, firstPrompt);
+  const promptTitle = derivePromptTitle(firstPrompt);
+
+  if (sessionName && !promptDerivedName) {
+    return {
+      title: sessionName,
+      source: "sessionName",
+      derived: false,
+      metaContext: projectLabel && comparableText(projectLabel) !== comparableText(sessionName) ? projectLabel : "",
+      secondaryText: promptTitle && comparableText(promptTitle) !== comparableText(sessionName) ? promptTitle : "",
+    };
+  }
+
+  if (informativeProject) {
+    return {
+      title: projectLabel,
+      source: "project",
+      derived: true,
+      metaContext: "",
+      secondaryText: promptTitle && comparableText(promptTitle) !== comparableText(projectLabel) ? promptTitle : "",
+    };
+  }
+
+  if (promptTitle) {
+    return {
+      title: promptTitle,
+      source: "prompt",
+      derived: true,
+      metaContext: projectLabel && comparableText(projectLabel) !== comparableText(promptTitle) ? projectLabel : "",
+      secondaryText: "",
+    };
+  }
+
+  if (projectLabel) {
+    return {
+      title: projectLabel,
+      source: "project",
+      derived: true,
+      metaContext: "",
+      secondaryText: "",
+    };
+  }
+
+  if (sessionName) {
+    return {
+      title: sessionName,
+      source: "sessionName",
+      derived: false,
+      metaContext: "",
+      secondaryText: "",
+    };
+  }
+
+  return {
+    title: "Session",
+    source: "fallback",
+    derived: true,
+    metaContext: "",
+    secondaryText: "",
+  };
 }
 
 function formatDate(value) {
@@ -155,20 +282,34 @@ function focusTreeNode(nodeId, options = {}) {
   if (!state.selectedSessionDetail || !nodeId) return;
   state.focusedTreeNodeId = nodeId;
   if (options.treeMode) state.treeMode = options.treeMode;
+  if (options.conversationMode) state.conversationMode = options.conversationMode;
   renderDetail(state.selectedSessionDetail);
   if (options.scroll !== false) {
     requestAnimationFrame(() => scrollTreeNodeIntoView(nodeId));
   }
 }
 
+function flattenTreeRows(nodes, branchDepth = 0, rows = []) {
+  for (const node of nodes ?? []) {
+    rows.push({ node, branchDepth });
+    const nextDepth = branchDepth + ((node.children?.length ?? 0) > 1 ? 1 : 0);
+    flattenTreeRows(node.children ?? [], nextDepth, rows);
+  }
+  return rows;
+}
+
 function renderTreeNodes(nodes) {
   if (!nodes?.length) {
-    return '<p class="muted small">No visible tree nodes available for this filter.</p>';
+    return '<p class="muted small">No visible branch structure available for this filter.</p>';
   }
 
+  const rows = flattenTreeRows(nodes);
+  const maxBranchDepth = rows.reduce((max, row) => Math.max(max, row.branchDepth), 0);
+  const railWidth = maxBranchDepth > 0 ? `${maxBranchDepth * 1.2}rem` : "0px";
+
   return `
-    <ul class="tree-list">
-      ${nodes.map((node) => {
+    <div class="tree-flat" style="--tree-rail-width: ${railWidth}">
+      ${rows.map(({ node, branchDepth }) => {
         const badges = [];
         if ((node.children?.length ?? 0) > 1) {
           badges.push(`<span class="tag">branch ×${node.children.length}</span>`);
@@ -177,8 +318,15 @@ function renderTreeNodes(nodes) {
           badges.push(`<span class="tag">${escapeHtml(label)}</span>`);
         }
 
+        const lanes = Array.from({ length: maxBranchDepth }, (_, laneIndex) => {
+          const active = laneIndex < branchDepth;
+          const current = laneIndex === branchDepth - 1;
+          return `<span class="tree-lane ${active ? "active" : ""} ${current ? "current" : ""}"></span>`;
+        }).join("");
+
         return `
-          <li>
+          <div class="tree-row ${branchDepth > 0 ? "branched" : "rooted"}" data-branch-depth="${branchDepth}">
+            <div class="tree-lanes" aria-hidden="true">${lanes}</div>
             <div class="tree-node ${node.active ? "active" : ""} ${state.focusedTreeNodeId === node.id ? "focused" : ""} ${(node.children?.length ?? 0) > 1 ? "branching" : ""}" data-tree-node="${escapeHtml(node.id)}">
               <div class="tree-node-header">
                 <span class="tree-kind">${escapeHtml(node.label)}</span>
@@ -187,12 +335,59 @@ function renderTreeNodes(nodes) {
               <div class="tree-text">${escapeHtml(node.text)}</div>
               ${badges.length ? `<div class="tag-row">${badges.join("")}</div>` : ""}
             </div>
-            ${node.children?.length ? renderTreeNodes(node.children) : ""}
-          </li>
+          </div>
         `;
       }).join("")}
-    </ul>
+    </div>
   `;
+}
+
+function renderTimelineEntries(session) {
+  return `
+    ${session.omittedEntryCount > 0 ? `<p class="muted small">Showing a transcript excerpt: omitted ${session.omittedEntryCount} middle entries from this session.</p>` : ""}
+    <div class="timeline-list">
+      ${session.previewEntries.map((entry) => {
+        const roleClass = String(entry.role || "message").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+        return `
+          <section class="timeline-entry timeline-${escapeHtml(roleClass)}">
+            <div class="timeline-marker" aria-hidden="true"></div>
+            <div class="timeline-card preview-entry">
+              <div class="preview-entry-role">${escapeHtml(entry.role)} ${entry.timestamp ? `<time>${escapeHtml(formatDate(entry.timestamp))}</time>` : ""}</div>
+              <div>${escapeHtml(entry.text)}</div>
+            </div>
+          </section>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+async function loadTheme() {
+  try {
+    const data = await fetchJson("/api/theme");
+    const theme = data.theme;
+    const rootStyle = document.documentElement.style;
+
+    for (const variable of appliedThemeVariables) {
+      rootStyle.removeProperty(variable);
+    }
+    appliedThemeVariables.clear();
+
+    if (!theme?.variables) {
+      rootStyle.removeProperty("color-scheme");
+      return;
+    }
+
+    for (const [variable, value] of Object.entries(theme.variables)) {
+      if (!value) continue;
+      rootStyle.setProperty(variable, value);
+      appliedThemeVariables.add(variable);
+    }
+
+    if (theme.mode) rootStyle.setProperty("color-scheme", theme.mode);
+  } catch {
+    // keep CSS defaults if theme loading fails
+  }
 }
 
 async function loadStats() {
@@ -256,7 +451,7 @@ function renderProjects() {
     .map((project) => {
       const active = project.projectId === state.selectedProject;
       return `
-        <button class="list-item ${active ? "active" : ""}" data-project="${project.projectId ?? ""}">
+        <button class="list-item project-item ${active ? "active" : ""}" data-project="${project.projectId ?? ""}">
           <div class="project-row">
             <strong>${escapeHtml(project.projectLabel)}</strong>
             <span class="project-count">${project.sessionCount}</span>
@@ -281,12 +476,18 @@ function renderSessions() {
     .map((session) => {
       const active = session.sessionFile === state.selectedSessionFile;
       const score = state.query && session.score ? `<span class="tag">score ${session.score}</span>` : "";
+      const display = getSessionDisplay(session);
+      const title = display.title;
+      const derived = display.derived;
+      const metaParts = [];
+      if (display.metaContext) metaParts.push(display.metaContext);
+      metaParts.push(formatDate(session.updatedAt));
       return `
-        <article class="list-item ${active ? "active" : ""}" data-session="${session.sessionFile}">
-          <div class="session-card-title">${escapeHtml(session.sessionName || session.firstUserPrompt || session.projectLabel)}</div>
-          <div class="session-card-meta">${escapeHtml(session.projectLabel)} · ${formatDate(session.updatedAt)}</div>
-          <div class="small muted">${session.userMessageCount} user · ${session.assistantMessageCount} assistant · ${session.branchPointCount} branches</div>
-          ${session.firstUserPrompt ? `<div class="session-card-body">${escapeHtml(session.firstUserPrompt)}</div>` : ""}
+        <article class="list-item session-item ${active ? "active" : ""}" data-session="${session.sessionFile}">
+          <div class="session-card-title ${derived ? "derived" : ""}">${escapeHtml(title)}</div>
+          <div class="session-card-meta">${escapeHtml(metaParts.filter(Boolean).join(" · "))}</div>
+          <div class="session-card-stats small muted">${session.userMessageCount} user · ${session.assistantMessageCount} assistant · ${session.branchPointCount} branches</div>
+          ${display.secondaryText ? `<div class="session-card-body"><span class="session-card-body-label">Task</span>${escapeHtml(display.secondaryText)}</div>` : ""}
           ${session.matchSnippet ? `<div class="snippet muted">${escapeHtml(session.matchSnippet)}</div>` : ""}
           ${(session.labels?.length || score) ? `<div class="tag-row">${score}${session.labels.map((label) => `<span class="tag">${escapeHtml(label)}</span>`).join("")}</div>` : ""}
         </article>
@@ -337,19 +538,40 @@ function renderDetail(session) {
   const totalTreeNodes = countTreeNodes(session.tree);
   const visibleTreeNodes = countTreeNodes(filteredTree);
   const focusedNode = findTreeNode(session.tree, state.focusedTreeNodeId);
+  const display = getSessionDisplay(session);
+  const detailTitle = display.title;
+  const detailSubtitleParts = [];
+  if (display.metaContext && display.metaContext !== detailTitle) detailSubtitleParts.push(display.metaContext);
+  if (session.updatedAt) detailSubtitleParts.push(formatDate(session.updatedAt));
+  const detailLeadPreview = display.secondaryText || "";
 
   els.detailEmpty.classList.add("hidden");
   els.detail.classList.remove("hidden");
 
   els.detail.innerHTML = `
-    <h2>${escapeHtml(session.sessionName || session.firstUserPrompt || session.projectLabel)}</h2>
-    <p class="muted">${escapeHtml(session.projectLabel)} · ${formatDate(session.updatedAt)}</p>
+    <section class="detail-hero">
+      <div class="detail-heading">
+        <div class="eyebrow">Session</div>
+        <h2>${escapeHtml(detailTitle)}</h2>
+        ${detailSubtitleParts.length ? `<p class="detail-subtitle muted">${escapeHtml(detailSubtitleParts.join(" · "))}</p>` : ""}
+        ${detailLeadPreview ? `<p class="detail-lead"><span class="detail-lead-label">Task</span>${escapeHtml(detailLeadPreview)}</p>` : ""}
+      </div>
 
-    <div class="actions">
-      <button id="copy-link">Copy link</button>
-      <button id="copy-resume">Copy resume command</button>
-      <button id="copy-handoff">Copy handoff markdown</button>
-      <button id="save-distill">Save distill</button>
+      <div class="actions">
+        <button id="copy-link" class="action-button">Copy link</button>
+        <button id="copy-resume" class="action-button">Copy resume command</button>
+        <button id="copy-handoff" class="action-button">Copy handoff markdown</button>
+        <button id="save-distill" class="action-button button-primary">Save distill</button>
+      </div>
+    </section>
+
+    <div class="summary-bar">
+      <span class="summary-pill">${session.userMessageCount} user</span>
+      <span class="summary-pill">${session.assistantMessageCount} assistant</span>
+      <span class="summary-pill">${session.totalEntries} total entries</span>
+      <span class="summary-pill">${session.treeStats.branchPoints} branches</span>
+      <span class="summary-pill">${session.treeStats.compactions} compactions</span>
+      ${session.labels.length ? `<span class="summary-pill">${session.labels.length} labels</span>` : ""}
     </div>
 
     <div class="detail-grid">
@@ -374,7 +596,7 @@ function renderDetail(session) {
         <div>${session.userMessageCount} user · ${session.assistantMessageCount} assistant · ${session.totalEntries} total entries</div>
       </div>
       <div class="metric">
-        <div class="metric-label">Tree stats</div>
+        <div class="metric-label">Structure stats</div>
         <div>${escapeHtml(formatTreeStats(session))}</div>
       </div>
       <div class="metric">
@@ -404,7 +626,7 @@ function renderDetail(session) {
                 <div class="preview-entry-role">${escapeHtml(label.label)} ${label.timestamp ? `<time>${escapeHtml(formatDate(label.timestamp))}</time>` : ""}</div>
                 <div>${escapeHtml(label.targetText || "")}</div>
               </div>
-              ${label.targetId ? `<button class="mini-button" data-jump-node="${escapeHtml(label.targetId)}">Jump to tree</button>` : ""}
+              ${label.targetId ? `<button class="mini-button" data-jump-node="${escapeHtml(label.targetId)}">Jump to branches</button>` : ""}
             </section>
           `).join("")}
         </div>
@@ -412,23 +634,40 @@ function renderDetail(session) {
     ` : ""}
 
     <section class="detail-section">
-      <h3>Session tree</h3>
-      <p class="muted small">Visible user/assistant flow with summaries and labels. Click a node to focus it. Active path is highlighted.</p>
-      <div class="tree-toolbar">
+      <h3>Conversation</h3>
+      <p class="muted small">Timeline shows a readable transcript excerpt. Branches shows structural flow with compactions, labels, and branch points.</p>
+      <div class="tree-toolbar conversation-toolbar">
         <div class="segmented-control">
-          <button class="segmented-button ${state.treeMode === "all" ? "active" : ""}" data-tree-mode="all">All</button>
-          <button class="segmented-button ${state.treeMode === "active" ? "active" : ""}" data-tree-mode="active">Active path</button>
-          <button class="segmented-button ${state.treeMode === "branches" ? "active" : ""}" data-tree-mode="branches">Branches + labels</button>
+          <button class="segmented-button ${state.conversationMode === "timeline" ? "active" : ""}" data-conversation-mode="timeline">Timeline</button>
+          <button class="segmented-button ${state.conversationMode === "branches" ? "active" : ""}" data-conversation-mode="branches">Branches</button>
         </div>
-        <div class="small muted">${visibleTreeNodes}/${totalTreeNodes} nodes shown</div>
+        <div class="small muted">${state.conversationMode === "timeline"
+          ? `${session.previewEntries.length} excerpt entries shown`
+          : `${visibleTreeNodes}/${totalTreeNodes} structure nodes shown`}</div>
       </div>
-      ${focusedNode ? `
-        <div class="focus-banner">
-          <div class="small"><strong>Focused node:</strong> ${escapeHtml(focusedNode.label)} — ${escapeHtml(focusedNode.text)}</div>
-          <button id="clear-tree-focus" class="mini-button">Clear focus</button>
+      ${state.conversationMode === "timeline" ? `
+        <div class="conversation-panel timeline-panel">
+          ${renderTimelineEntries(session)}
         </div>
-      ` : ""}
-      ${renderTreeNodes(filteredTree)}
+      ` : `
+        <div class="conversation-panel branches-panel">
+          <div class="tree-toolbar tree-subtoolbar">
+            <div class="segmented-control">
+              <button class="segmented-button ${state.treeMode === "all" ? "active" : ""}" data-tree-mode="all">All</button>
+              <button class="segmented-button ${state.treeMode === "active" ? "active" : ""}" data-tree-mode="active">Active path</button>
+              <button class="segmented-button ${state.treeMode === "branches" ? "active" : ""}" data-tree-mode="branches">Branches + labels</button>
+            </div>
+            <div class="small muted">Rows stay vertically aligned; left rails show branch levels.</div>
+          </div>
+          ${focusedNode ? `
+            <div class="focus-banner">
+              <div class="small"><strong>Selected node:</strong> ${escapeHtml(focusedNode.label)} — ${escapeHtml(focusedNode.text)}</div>
+              <button id="clear-tree-focus" class="mini-button">Clear selection</button>
+            </div>
+          ` : ""}
+          ${renderTreeNodes(filteredTree)}
+        </div>
+      `}
     </section>
 
     ${session.pathMentions.length ? `
@@ -445,18 +684,6 @@ function renderDetail(session) {
       </section>
     ` : ""}
 
-    <section class="detail-section">
-      <h3>Preview</h3>
-      ${session.omittedEntryCount > 0 ? `<p class="muted small">Omitted ${session.omittedEntryCount} middle entries from this preview.</p>` : ""}
-      <div class="preview-list">
-        ${session.previewEntries.map((entry) => `
-          <section class="preview-entry">
-            <div class="preview-entry-role">${escapeHtml(entry.role)} ${entry.timestamp ? `<time>${escapeHtml(formatDate(entry.timestamp))}</time>` : ""}</div>
-            <div>${escapeHtml(entry.text)}</div>
-          </section>
-        `).join("")}
-      </div>
-    </section>
   `;
 
   const copyLinkButton = els.detail.querySelector("#copy-link");
@@ -493,6 +720,16 @@ function renderDetail(session) {
     renderDetail(session);
   });
 
+  els.detail.querySelectorAll("[data-conversation-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.conversationMode = button.dataset.conversationMode || "timeline";
+      renderDetail(session);
+      if (state.conversationMode === "branches" && state.focusedTreeNodeId) {
+        requestAnimationFrame(() => scrollTreeNodeIntoView(state.focusedTreeNodeId));
+      }
+    });
+  });
+
   els.detail.querySelectorAll("[data-tree-mode]").forEach((button) => {
     button.addEventListener("click", () => {
       state.treeMode = button.dataset.treeMode || "all";
@@ -505,7 +742,7 @@ function renderDetail(session) {
 
   els.detail.querySelectorAll("[data-jump-node]").forEach((button) => {
     button.addEventListener("click", () => {
-      focusTreeNode(button.dataset.jumpNode, { treeMode: "branches" });
+      focusTreeNode(button.dataset.jumpNode, { conversationMode: "branches", treeMode: "branches" });
     });
   });
 
@@ -528,7 +765,7 @@ els.search.addEventListener("input", () => {
 els.refresh.addEventListener("click", async () => {
   await flashButton(els.refresh, "Refreshing…", async () => {
     await fetchJson("/api/refresh", { method: "POST" });
-    await Promise.all([loadStats(), loadProjects(), loadSessions()]);
+    await Promise.all([loadTheme(), loadStats(), loadProjects(), loadSessions()]);
     if (state.selectedSessionFile) {
       await selectSession(state.selectedSessionFile);
     }
@@ -544,5 +781,5 @@ window.addEventListener("hashchange", async () => {
   }
 });
 
-await Promise.all([loadStats(), loadProjects()]);
+await Promise.all([loadTheme(), loadStats(), loadProjects()]);
 await loadSessions();

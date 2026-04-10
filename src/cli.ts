@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SessionIndex } from "./sessions.js";
+import { loadActiveBrowserTheme } from "./pi-theme.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PUBLIC_DIR = join(ROOT, "public");
@@ -80,12 +81,49 @@ function openBrowser(url: string): void {
   execFile(command, args, () => {});
 }
 
+async function isSessionBrowserRunning(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${url}/api/health`);
+    if (!response.ok) return false;
+    const body = (await response.json()) as { ok?: unknown; sessions?: unknown; projects?: unknown };
+    return body.ok === true && typeof body.sessions === "number" && typeof body.projects === "number";
+  } catch {
+    return false;
+  }
+}
+
+async function listen(server: Server, port: number): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+
+    const onListening = () => {
+      server.off("error", onError);
+      resolve();
+    };
+
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, "127.0.0.1");
+  });
+}
+
 async function main(): Promise<void> {
   const port = Number.parseInt(getArg("--port") ?? process.env.PI_SESSION_BROWSER_PORT ?? "4314", 10);
   const sessionsDir = getArg("--sessions-dir") ?? process.env.PI_SESSION_BROWSER_SESSIONS_DIR;
   const indexDbPath = getArg("--index-db") ?? process.env.PI_SESSION_BROWSER_INDEX_DB ?? DEFAULT_INDEX_DB;
   const distillDir = getArg("--distill-dir") ?? process.env.PI_SESSION_BROWSER_DISTILL_DIR ?? DEFAULT_DISTILL_DIR;
   const autoOpen = hasFlag("--open");
+  const appUrl = `http://127.0.0.1:${port}`;
+
+  if (await isSessionBrowserRunning(appUrl)) {
+    process.stdout.write(`pi-session-browser is already running at ${appUrl}\n`);
+    if (autoOpen) openBrowser(appUrl);
+    return;
+  }
+
   const index = new SessionIndex(sessionsDir, indexDbPath);
 
   process.stdout.write(`Indexing sessions from ${index.sessionsDir}...\n`);
@@ -111,6 +149,12 @@ async function main(): Promise<void> {
 
     if (pathname === "/api/health") {
       json(res, 200, { ok: true, distillDir, ...index.getStats() });
+      return;
+    }
+
+    if (pathname === "/api/theme") {
+      const theme = await loadActiveBrowserTheme(process.cwd());
+      json(res, 200, { theme: theme ?? null });
       return;
     }
 
@@ -173,11 +217,26 @@ async function main(): Promise<void> {
     await serveStatic(pathname, res);
   });
 
-  await new Promise<void>((resolve) => {
-    server.listen(port, "127.0.0.1", () => resolve());
-  });
+  try {
+    await listen(server, port);
+  } catch (error) {
+    index.close();
 
-  const appUrl = `http://127.0.0.1:${port}`;
+    if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
+      if (await isSessionBrowserRunning(appUrl)) {
+        process.stdout.write(`\npi-session-browser is already running at ${appUrl}\n`);
+        if (autoOpen) openBrowser(appUrl);
+        return;
+      }
+
+      process.stderr.write(`\nPort ${port} is already in use on 127.0.0.1.\n`);
+      process.stderr.write(`Use --port ${port + 1} to start another instance.\n`);
+      process.exit(1);
+    }
+
+    throw error;
+  }
+
   process.stdout.write(`\npi-session-browser running at ${appUrl}\n`);
   process.stdout.write("Use --open to launch a browser automatically.\n");
 

@@ -8,13 +8,13 @@
   </head>
   <body>
     <header class="topbar">
-      <div>
+      <div class="topbar-brand">
         <h1>pi session browser</h1>
         <p class="muted">Search, preview, and distill your local pi sessions.</p>
       </div>
       <div class="topbar-actions">
-        <input id="search" type="search" placeholder="Search sessions... (supports label: and project:)">
-        <button id="refresh">Refresh</button>
+        <input id="search" type="search" placeholder="Search sessions... (supports label: and project:)" aria-label="Search sessions" autocomplete="off">
+        <button id="refresh" class="button-primary">Refresh</button>
       </div>
     </header>
 
