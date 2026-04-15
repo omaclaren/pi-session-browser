@@ -1,7 +1,7 @@
 {
   "name": "pi-session-browser",
   "version": "0.1.0",
-  "description": "Local web UI for exploring, searching, and distilling pi sessions",
+  "description": "Local web UI for exploring, searching, and saving notes or bundles from pi sessions",
   "type": "module",
   "license": "MIT",
   "repository": {

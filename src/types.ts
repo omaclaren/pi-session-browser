@@ -23,7 +23,9 @@ export type SessionProject = {
   projectId: string;
   projectLabel: string;
   sessionCount: number;
+  matchingSessionCount?: number;
   latestUpdatedAt?: string;
+  latestMatchingUpdatedAt?: string;
 };
 
 export type SessionPreviewEntry = {
@@ -82,12 +84,12 @@ export type SessionTreeNode = {
 export type SessionDetail = SessionSummary & {
   previewEntries: SessionPreviewEntry[];
   omittedEntryCount: number;
-  handoffMarkdown: string;
+  noteMarkdown: string;
   resumeCommand: string;
   deepLinkPath: string;
   recentLabels: SessionLabelRecord[];
   pathMentions: SessionPathMention[];
   treeStats: SessionTreeStats;
   tree: SessionTreeNode[];
-  distillFileName: string;
+  noteFileName: string;
 };

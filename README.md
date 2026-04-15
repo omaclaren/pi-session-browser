@@ -1,6 +1,6 @@
 # pi-session-browser
 
-Local web UI for exploring, searching, and distilling pi sessions.
+Local web UI for exploring, searching, and saving notes or bundles from pi sessions.
 
 ## Status
 
@@ -24,18 +24,18 @@ Current features:
 - extract recent labeled checkpoints and key path mentions
 - copy a local deep link
 - copy a `pi --session ...` resume command
-- copy a markdown handoff block for passing context forward
-- save a distilled markdown note to a local distill directory
+- copy a markdown session note for passing context forward
+- save a markdown session note to a local notes directory
+- multi-select sessions across projects/views and save a deterministic markdown bundle
 
 Planned next:
 - cached model-generated summaries
 - deeper branch-tree ergonomics (folding, subtree collapse, branch diff/focus)
-- optional pi-extension bridge for opening the current browser selection inside pi
+- optional pi-extension bridge for opening the current browser selection or bundle inside pi
 
 ## Run
 
 ```bash
-cd "/Users/omac010/Git-Working/pi-session-browser"
 npm install
 npm start
 ```
@@ -53,15 +53,55 @@ npm start -- --open
 npm start -- --port 4315
 npm start -- --sessions-dir "/custom/path/to/sessions"
 npm start -- --index-db "/custom/path/to/index.sqlite"
-npm start -- --distill-dir "/custom/path/to/distills"
+npm start -- --notes-dir "/custom/path/to/notes"
 ```
 
-You can also use the environment variables:
+Supported environment variables:
 
 - `PI_SESSION_BROWSER_PORT`
 - `PI_SESSION_BROWSER_SESSIONS_DIR`
 - `PI_SESSION_BROWSER_INDEX_DB`
+- `PI_SESSION_BROWSER_NOTES_DIR`
+
+Legacy note-directory aliases are still accepted for backward compatibility:
+
+- `--distill-dir`
 - `PI_SESSION_BROWSER_DISTILL_DIR`
+
+## Settings
+
+Pi-session-browser follows a pi-like global/project configuration style.
+
+Settings files:
+
+- Global: `~/.pi-session-browser/settings.json`
+- Project-local: `.pi-session-browser/settings.json`
+
+Supported keys:
+
+```json
+{
+  "port": 4314,
+  "sessionsDir": "~/.pi/agent/sessions",
+  "indexDbPath": "~/.cache/pi-session-browser/sessions.sqlite",
+  "notesDir": "~/.pi-session-browser/notes"
+}
+```
+
+Notes:
+
+- relative paths in settings files are resolved relative to the settings file location
+- CLI flags override environment variables
+- environment variables override project settings
+- project settings override global settings
+- global settings override built-in defaults
+- `distillDir` in settings is still accepted as a legacy alias for `notesDir`
+
+Built-in defaults:
+
+- Notes: `~/.pi-session-browser/notes`
+- Search index: `~/.cache/pi-session-browser/sessions.sqlite`
+- Sessions: `~/.pi/agent/sessions`
 
 ## Development
 
@@ -69,11 +109,3 @@ You can also use the environment variables:
 npm run typecheck
 npm start -- --open
 ```
-
-## Naming
-
-Repo name: `pi-session-browser`
-
-Suggested package name: `pi-session-browser`
-
-That matches the style of your other pi packages. If npm publish later reveals a collision, we can revisit, but the unscoped name appears fine to use for now.

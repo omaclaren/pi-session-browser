@@ -4,8 +4,10 @@ const state = {
   selectedProject: null,
   selectedSessionFile: null,
   selectedSessionDetail: null,
+  selectedSessionFiles: new Set(),
   query: "",
-  distillDir: "",
+  notesDir: "",
+  configInfo: null,
   conversationMode: "timeline",
   treeMode: "all",
   focusedTreeNodeId: null,
@@ -13,13 +15,23 @@ const state = {
 
 const els = {
   search: document.querySelector("#search"),
+  changeNotesDir: document.querySelector("#change-notes-dir"),
   refresh: document.querySelector("#refresh"),
   stats: document.querySelector("#stats"),
   projects: document.querySelector("#projects"),
   sessions: document.querySelector("#sessions"),
   sessionCount: document.querySelector("#session-count"),
+  sessionSelectionBar: document.querySelector("#session-selection-bar"),
   detail: document.querySelector("#detail"),
   detailEmpty: document.querySelector("#detail-empty"),
+  notesDirDialog: document.querySelector("#notes-dir-dialog"),
+  notesDirForm: document.querySelector("#notes-dir-form"),
+  notesDirInput: document.querySelector("#notes-dir-input"),
+  notesGlobalPath: document.querySelector("#notes-global-path"),
+  notesProjectPath: document.querySelector("#notes-project-path"),
+  notesDirStatus: document.querySelector("#notes-dir-status"),
+  notesDirCancel: document.querySelector("#notes-dir-cancel"),
+  notesDirSave: document.querySelector("#notes-dir-save"),
 };
 
 const appliedThemeVariables = new Set();
@@ -390,14 +402,77 @@ async function loadTheme() {
   }
 }
 
+function renderNotesDirButton() {
+  const label = state.notesDir ? `Notes: ${truncateText(state.notesDir, 28)}` : "Notes folder…";
+  els.changeNotesDir.textContent = label;
+  els.changeNotesDir.title = state.notesDir || "Change notes folder";
+}
+
 async function loadStats() {
   const data = await fetchJson("/api/health");
-  state.distillDir = data.distillDir || "";
+  state.notesDir = data.notesDir || data.distillDir || "";
   els.stats.textContent = `${data.sessions} sessions · ${data.indexedDocs} indexed docs · ${data.projects} projects`;
+  renderNotesDirButton();
+}
+
+async function loadConfig() {
+  const data = await fetchJson("/api/config");
+  state.configInfo = data;
+  if (data.notesDir) state.notesDir = data.notesDir;
+  renderNotesDirButton();
+}
+
+function openNotesDirDialog() {
+  if (!state.configInfo) return;
+  els.notesDirInput.value = state.notesDir || "";
+  els.notesGlobalPath.textContent = state.configInfo.globalSettingsPath || "";
+  els.notesProjectPath.textContent = state.configInfo.projectSettingsPath || "";
+  els.notesDirStatus.textContent = `Current effective folder: ${state.notesDir || "not set"}`;
+  const defaultScope = els.notesDirForm.querySelector('input[name="notesScope"][value="global"]');
+  if (defaultScope) defaultScope.checked = true;
+  els.notesDirDialog.showModal();
+  requestAnimationFrame(() => {
+    els.notesDirInput.focus();
+    els.notesDirInput.select();
+  });
+}
+
+async function saveNotesDirFromDialog() {
+  const checkedScope = els.notesDirForm.querySelector('input[name="notesScope"]:checked');
+  const scope = checkedScope?.value || "global";
+  const notesDir = els.notesDirInput.value.trim();
+  if (!notesDir) {
+    els.notesDirStatus.textContent = "Enter a folder path first.";
+    return;
+  }
+
+  els.notesDirStatus.textContent = "Saving…";
+  els.notesDirSave.disabled = true;
+
+  try {
+    const result = await fetchJson("/api/config/notes-dir", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ notesDir, scope }),
+    });
+
+    state.notesDir = result.notesDir || state.notesDir;
+    await loadConfig();
+    renderNotesDirButton();
+    if (state.selectedSessionDetail) renderDetail(state.selectedSessionDetail);
+    els.notesDirDialog.close();
+  } catch (error) {
+    els.notesDirStatus.textContent = error instanceof Error ? error.message : String(error);
+  } finally {
+    els.notesDirSave.disabled = false;
+  }
 }
 
 async function loadProjects() {
-  const data = await fetchJson("/api/projects");
+  const params = new URLSearchParams();
+  if (state.query) params.set("q", state.query);
+  const queryString = params.toString();
+  const data = await fetchJson(queryString ? `/api/projects?${queryString}` : "/api/projects");
   state.projects = data.projects;
   renderProjects();
 }
@@ -409,6 +484,7 @@ async function loadSessions() {
   params.set("limit", "250");
   const data = await fetchJson(`/api/sessions?${params.toString()}`);
   state.sessions = data.sessions;
+
   els.sessionCount.textContent = `${state.sessions.length} shown`;
   renderSessions();
 
@@ -437,12 +513,26 @@ async function loadSessions() {
 }
 
 function renderProjects() {
+  const queryActive = Boolean(state.query);
+  const totalSessions = state.projects.reduce((acc, project) => acc + project.sessionCount, 0);
+  const totalMatchingSessions = queryActive
+    ? state.projects.reduce((acc, project) => acc + (project.matchingSessionCount ?? 0), 0)
+    : totalSessions;
+  const matchingProjectCount = queryActive
+    ? state.projects.filter((project) => (project.matchingSessionCount ?? 0) > 0).length
+    : state.projects.length;
+  const latestMatchingUpdatedAt = state.projects.find((project) => (project.matchingSessionCount ?? 0) > 0)?.latestMatchingUpdatedAt;
+
   const items = [
     {
       projectId: null,
-      projectLabel: "All sessions",
-      sessionCount: state.projects.reduce((acc, project) => acc + project.sessionCount, 0),
+      projectLabel: queryActive ? "All matches" : "All sessions",
+      sessionCount: totalSessions,
+      matchingSessionCount: totalMatchingSessions,
       latestUpdatedAt: state.projects[0]?.latestUpdatedAt,
+      latestMatchingUpdatedAt,
+      matchingProjectCount,
+      isRoot: true,
     },
     ...state.projects,
   ];
@@ -450,13 +540,32 @@ function renderProjects() {
   els.projects.innerHTML = items
     .map((project) => {
       const active = project.projectId === state.selectedProject;
+      const matchingCount = queryActive ? (project.matchingSessionCount ?? 0) : project.sessionCount;
+      const unmatched = queryActive && !project.isRoot && matchingCount === 0;
+      const countLabel = queryActive ? `${matchingCount}/${project.sessionCount}` : `${project.sessionCount}`;
+      let meta = "";
+      if (queryActive) {
+        if (project.isRoot) {
+          meta = `${project.matchingProjectCount} matching projects`;
+        } else if (matchingCount === 0) {
+          meta = "No matching sessions";
+        } else {
+          const parts = [`${matchingCount} matching`];
+          const timestamp = project.latestMatchingUpdatedAt ?? project.latestUpdatedAt;
+          if (timestamp) parts.push(formatDate(timestamp));
+          meta = parts.join(" · ");
+        }
+      } else {
+        meta = project.latestUpdatedAt ? formatDate(project.latestUpdatedAt) : "";
+      }
+
       return `
-        <button class="list-item project-item ${active ? "active" : ""}" data-project="${project.projectId ?? ""}">
+        <button class="list-item project-item ${active ? "active" : ""} ${unmatched ? "unmatched" : ""}" data-project="${project.projectId ?? ""}">
           <div class="project-row">
             <strong>${escapeHtml(project.projectLabel)}</strong>
-            <span class="project-count">${project.sessionCount}</span>
+            <span class="project-count">${escapeHtml(countLabel)}</span>
           </div>
-          <div class="small muted">${project.latestUpdatedAt ? formatDate(project.latestUpdatedAt) : ""}</div>
+          <div class="small muted">${escapeHtml(meta)}</div>
         </button>
       `;
     })
@@ -471,10 +580,94 @@ function renderProjects() {
   });
 }
 
+function getSelectedSessionFiles() {
+  return Array.from(state.selectedSessionFiles);
+}
+
+function getSelectedVisibleSessionFiles() {
+  return state.sessions
+    .filter((session) => state.selectedSessionFiles.has(session.sessionFile))
+    .map((session) => session.sessionFile);
+}
+
+function toggleSessionSelection(sessionFile, checked) {
+  if (!sessionFile) return;
+  if (checked) {
+    state.selectedSessionFiles.add(sessionFile);
+  } else {
+    state.selectedSessionFiles.delete(sessionFile);
+  }
+  renderSessions();
+}
+
+function renderSessionSelectionBar() {
+  const selectedCount = state.selectedSessionFiles.size;
+  const visibleSelectedCount = getSelectedVisibleSessionFiles().length;
+  const hiddenSelectedCount = Math.max(0, selectedCount - visibleSelectedCount);
+  const allShownSelected = state.sessions.length > 0 && visibleSelectedCount === state.sessions.length;
+
+  let summary = "Select sessions to save a deterministic bundle note";
+  if (selectedCount > 0) {
+    summary = `<strong>${selectedCount}</strong> selected for bundle`;
+    if (hiddenSelectedCount > 0) {
+      summary += ` <span class="selection-detail">(${visibleSelectedCount} shown here, ${hiddenSelectedCount} in other projects/views)</span>`;
+    } else if (visibleSelectedCount > 0 && selectedCount > 1) {
+      summary += ` <span class="selection-detail">(${visibleSelectedCount} shown here)</span>`;
+    }
+  }
+
+  els.sessionSelectionBar.innerHTML = `
+    <div class="selection-toolbar-main">
+      <div class="selection-summary ${selectedCount > 0 ? "has-selection" : ""}">
+        ${summary}
+      </div>
+      <div class="selection-actions">
+        <button class="mini-button" data-selection-action="select-all" ${state.sessions.length === 0 || allShownSelected ? "disabled" : ""}>Select all shown</button>
+        <button class="mini-button" data-selection-action="clear-shown" ${visibleSelectedCount === 0 ? "disabled" : ""}>Clear shown</button>
+        <button class="mini-button" data-selection-action="clear-all" ${selectedCount === 0 ? "disabled" : ""}>Clear all</button>
+        <button class="mini-button" data-selection-action="save-bundle" ${selectedCount === 0 ? "disabled" : ""}>Save bundle</button>
+      </div>
+    </div>
+  `;
+
+  els.sessionSelectionBar.querySelector('[data-selection-action="select-all"]')?.addEventListener("click", () => {
+    state.sessions.forEach((session) => state.selectedSessionFiles.add(session.sessionFile));
+    renderSessions();
+  });
+
+  els.sessionSelectionBar.querySelector('[data-selection-action="clear-shown"]')?.addEventListener("click", () => {
+    state.sessions.forEach((session) => state.selectedSessionFiles.delete(session.sessionFile));
+    renderSessions();
+  });
+
+  els.sessionSelectionBar.querySelector('[data-selection-action="clear-all"]')?.addEventListener("click", () => {
+    state.selectedSessionFiles.clear();
+    renderSessions();
+  });
+
+  els.sessionSelectionBar.querySelector('[data-selection-action="save-bundle"]')?.addEventListener("click", async (event) => {
+    const selectedPaths = getSelectedSessionFiles();
+    if (!selectedPaths.length) return;
+
+    const button = event.currentTarget;
+    await flashButton(button, "Saving…", async () => {
+      const result = await fetchJson("/api/bundle", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ paths: selectedPaths }),
+      });
+      button.textContent = `Saved ${result.fileName}`;
+    });
+  });
+}
+
 function renderSessions() {
+  renderSessionSelectionBar();
+
   els.sessions.innerHTML = state.sessions
     .map((session) => {
       const active = session.sessionFile === state.selectedSessionFile;
+      const marked = state.selectedSessionFiles.has(session.sessionFile);
       const score = state.query && session.score ? `<span class="tag">score ${session.score}</span>` : "";
       const display = getSessionDisplay(session);
       const title = display.title;
@@ -483,8 +676,13 @@ function renderSessions() {
       if (display.metaContext) metaParts.push(display.metaContext);
       metaParts.push(formatDate(session.updatedAt));
       return `
-        <article class="list-item session-item ${active ? "active" : ""}" data-session="${session.sessionFile}">
-          <div class="session-card-title ${derived ? "derived" : ""}">${escapeHtml(title)}</div>
+        <article class="list-item session-item ${active ? "active" : ""} ${marked ? "marked" : ""}" data-session="${escapeHtml(session.sessionFile)}">
+          <div class="session-item-header">
+            <div class="session-card-title ${derived ? "derived" : ""}">${escapeHtml(title)}</div>
+            <label class="session-select" title="Select session for bundle">
+              <input type="checkbox" data-select-session="${escapeHtml(session.sessionFile)}" ${marked ? "checked" : ""} aria-label="Select ${escapeHtml(title)} for bundle">
+            </label>
+          </div>
           <div class="session-card-meta">${escapeHtml(metaParts.filter(Boolean).join(" · "))}</div>
           <div class="session-card-stats small muted">${session.userMessageCount} user · ${session.assistantMessageCount} assistant · ${session.branchPointCount} branches</div>
           ${display.secondaryText ? `<div class="session-card-body"><span class="session-card-body-label">Task</span>${escapeHtml(display.secondaryText)}</div>` : ""}
@@ -498,6 +696,16 @@ function renderSessions() {
   els.sessions.querySelectorAll("[data-session]").forEach((element) => {
     element.addEventListener("click", async () => {
       await selectSession(element.dataset.session);
+    });
+  });
+
+  els.sessions.querySelectorAll("[data-select-session]").forEach((input) => {
+    input.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+    input.addEventListener("change", (event) => {
+      const target = event.currentTarget;
+      toggleSessionSelection(target.dataset.selectSession, target.checked);
     });
   });
 }
@@ -560,8 +768,8 @@ function renderDetail(session) {
       <div class="actions">
         <button id="copy-link" class="action-button">Copy link</button>
         <button id="copy-resume" class="action-button">Copy resume command</button>
-        <button id="copy-handoff" class="action-button">Copy handoff markdown</button>
-        <button id="save-distill" class="action-button button-primary">Save distill</button>
+        <button id="copy-note" class="action-button">Copy note</button>
+        <button id="save-note" class="action-button button-primary">Save note</button>
       </div>
     </section>
 
@@ -600,8 +808,8 @@ function renderDetail(session) {
         <div>${escapeHtml(formatTreeStats(session))}</div>
       </div>
       <div class="metric">
-        <div class="metric-label">Distill target</div>
-        <div class="code-block">${escapeHtml(state.distillDir ? `${state.distillDir}/${session.distillFileName}` : session.distillFileName)}</div>
+        <div class="metric-label">Note target</div>
+        <div class="code-block">${escapeHtml(state.notesDir ? `${state.notesDir}/${session.noteFileName}` : session.noteFileName)}</div>
       </div>
       <div class="metric">
         <div class="metric-label">Resume command</div>
@@ -688,8 +896,8 @@ function renderDetail(session) {
 
   const copyLinkButton = els.detail.querySelector("#copy-link");
   const copyResumeButton = els.detail.querySelector("#copy-resume");
-  const copyHandoffButton = els.detail.querySelector("#copy-handoff");
-  const saveDistillButton = els.detail.querySelector("#save-distill");
+  const copyNoteButton = els.detail.querySelector("#copy-note");
+  const saveNoteButton = els.detail.querySelector("#save-note");
   const clearFocusButton = els.detail.querySelector("#clear-tree-focus");
 
   copyLinkButton.addEventListener("click", () => {
@@ -700,18 +908,18 @@ function renderDetail(session) {
     copyText(session.resumeCommand, copyResumeButton, "Command copied");
   });
 
-  copyHandoffButton.addEventListener("click", () => {
-    copyText(session.handoffMarkdown, copyHandoffButton, "Handoff copied");
+  copyNoteButton.addEventListener("click", () => {
+    copyText(session.noteMarkdown, copyNoteButton, "Note copied");
   });
 
-  saveDistillButton.addEventListener("click", async () => {
-    await flashButton(saveDistillButton, "Saving…", async () => {
-      const result = await fetchJson("/api/distill", {
+  saveNoteButton.addEventListener("click", async () => {
+    await flashButton(saveNoteButton, "Saving…", async () => {
+      const result = await fetchJson("/api/note", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ path: session.sessionFile }),
       });
-      saveDistillButton.textContent = `Saved ${result.fileName}`;
+      saveNoteButton.textContent = `Saved ${result.fileName}`;
     });
   });
 
@@ -758,14 +966,28 @@ els.search.addEventListener("input", () => {
   clearTimeout(debounceHandle);
   debounceHandle = setTimeout(async () => {
     state.query = els.search.value.trim();
-    await loadSessions();
+    await Promise.all([loadProjects(), loadSessions()]);
   }, 150);
+});
+
+els.changeNotesDir.addEventListener("click", async () => {
+  if (!state.configInfo) await loadConfig();
+  openNotesDirDialog();
+});
+
+els.notesDirCancel.addEventListener("click", () => {
+  els.notesDirDialog.close();
+});
+
+els.notesDirForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await saveNotesDirFromDialog();
 });
 
 els.refresh.addEventListener("click", async () => {
   await flashButton(els.refresh, "Refreshing…", async () => {
     await fetchJson("/api/refresh", { method: "POST" });
-    await Promise.all([loadTheme(), loadStats(), loadProjects(), loadSessions()]);
+    await Promise.all([loadTheme(), loadStats(), loadConfig(), loadProjects(), loadSessions()]);
     if (state.selectedSessionFile) {
       await selectSession(state.selectedSessionFile);
     }
@@ -781,5 +1003,5 @@ window.addEventListener("hashchange", async () => {
   }
 });
 
-await Promise.all([loadTheme(), loadStats(), loadProjects()]);
+await Promise.all([loadTheme(), loadStats(), loadConfig(), loadProjects()]);
 await loadSessions();

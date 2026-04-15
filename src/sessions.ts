@@ -435,7 +435,14 @@ function extractPathMentions(texts: string[]): SessionPathMention[] {
     .map(([path, count]) => ({ path, count }));
 }
 
-function buildDistillFileName(summary: SessionSummary): string {
+function getSessionNoteTitle(summary: Pick<SessionSummary, "sessionName" | "projectLabel" | "firstUserPrompt" | "sessionFile">): string {
+  return summary.sessionName
+    ?? shorten(summary.firstUserPrompt, 96)
+    ?? summary.projectLabel
+    ?? basename(summary.sessionFile);
+}
+
+function buildNoteFileName(summary: SessionSummary): string {
   const date = (summary.createdAt ?? summary.updatedAt).slice(0, 10);
   const slug = slugify(summary.sessionName ?? summary.projectLabel ?? summary.firstUserPrompt, "session");
   return `${date}_${slug}_${summary.sessionId.slice(0, 8)}.md`;
@@ -520,7 +527,7 @@ function buildVisibleTree(params: {
   return roots;
 }
 
-function buildHandoffMarkdown(input: {
+function buildSessionNoteMarkdown(input: {
   summary: SessionSummary;
   previewEntries: SessionPreviewEntry[];
   omittedEntryCount: number;
@@ -533,7 +540,7 @@ function buildHandoffMarkdown(input: {
   const { summary, previewEntries, omittedEntryCount, recentLabels, pathMentions, treeStats, deepLinkPath, resumeCommand } = input;
   const lines: string[] = [];
 
-  lines.push(`# Session handoff: ${summary.sessionName ?? summary.projectLabel}`);
+  lines.push(`# Session note: ${summary.sessionName ?? summary.projectLabel}`);
   lines.push("");
   lines.push(`- Project: ${displayPath(summary.cwd)}`);
   lines.push(`- Session file: ${summary.sessionFile}`);
@@ -567,7 +574,7 @@ function buildHandoffMarkdown(input: {
   }
 
   lines.push("");
-  lines.push("## Preview");
+  lines.push("## Transcript excerpt");
   lines.push("");
   for (const entry of previewEntries) {
     lines.push(`### ${entry.role}`);
@@ -575,14 +582,14 @@ function buildHandoffMarkdown(input: {
     lines.push("");
   }
   if (omittedEntryCount > 0) {
-    lines.push(`_Omitted ${omittedEntryCount} middle entries from this preview._`);
+    lines.push(`_Omitted ${omittedEntryCount} middle entries from this excerpt._`);
     lines.push("");
   }
   lines.push(`Local viewer link: ${deepLinkPath}`);
   return lines.join("\n").trim();
 }
 
-function buildDistillMarkdown(detail: SessionDetail): string {
+function buildSavedSessionNoteMarkdown(detail: SessionDetail): string {
   const lines: string[] = [];
   lines.push("---");
   lines.push(`session_id: ${JSON.stringify(detail.sessionId)}`);
@@ -597,8 +604,121 @@ function buildDistillMarkdown(detail: SessionDetail): string {
   }
   lines.push("---");
   lines.push("");
-  lines.push(detail.handoffMarkdown);
+  lines.push(detail.noteMarkdown);
   return lines.join("\n");
+}
+
+function demoteMarkdownHeadings(markdown: string, levels = 1): string {
+  return markdown.replace(/^(#{1,6})(\s+)/gm, (_match, hashes: string, spacing: string) => {
+    return `${"#".repeat(Math.min(6, hashes.length + levels))}${spacing}`;
+  });
+}
+
+function sortCounts(counts: Map<string, number>): Array<[string, number]> {
+  return Array.from(counts.entries())
+    .sort((a, b) => (b[1] === a[1] ? a[0].localeCompare(b[0]) : b[1] - a[1]));
+}
+
+function buildBundleFileName(details: SessionDetail[]): string {
+  const latestUpdatedAt = details.map((detail) => detail.updatedAt).sort().at(-1) ?? "bundle";
+  const uniqueProjects = Array.from(new Set(details.map((detail) => detail.projectLabel).filter(Boolean)));
+  const base = uniqueProjects.length === 1
+    ? `bundle-${uniqueProjects[0]}`
+    : `bundle-${getSessionNoteTitle(details[0])}`;
+  const firstId = details[0]?.sessionId.slice(0, 4) ?? "sess";
+  const lastId = details.at(-1)?.sessionId.slice(0, 4) ?? firstId;
+  return `${latestUpdatedAt.slice(0, 10)}_${slugify(base, "session-bundle")}_${details.length}_${firstId}${lastId}.md`;
+}
+
+function buildSessionBundleMarkdown(details: SessionDetail[]): string {
+  const uniqueProjects = Array.from(new Set(details.map((detail) => detail.projectLabel).filter(Boolean)));
+  const startTimestamps = details.map((detail) => detail.createdAt ?? detail.updatedAt).filter(Boolean).sort();
+  const updatedTimestamps = details.map((detail) => detail.updatedAt).filter(Boolean).sort();
+  const labelCounts = new Map<string, number>();
+  const pathCounts = new Map<string, number>();
+
+  for (const detail of details) {
+    for (const label of detail.labels) {
+      labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+    }
+    for (const mention of detail.pathMentions) {
+      pathCounts.set(mention.path, (pathCounts.get(mention.path) ?? 0) + mention.count);
+    }
+  }
+
+  const totalUserMessages = details.reduce((sum, detail) => sum + detail.userMessageCount, 0);
+  const totalAssistantMessages = details.reduce((sum, detail) => sum + detail.assistantMessageCount, 0);
+  const totalEntries = details.reduce((sum, detail) => sum + detail.totalEntries, 0);
+  const totalBranches = details.reduce((sum, detail) => sum + detail.treeStats.branchPoints, 0);
+  const totalCompactions = details.reduce((sum, detail) => sum + detail.treeStats.compactions, 0);
+  const totalBranchSummaries = details.reduce((sum, detail) => sum + detail.treeStats.branchSummaries, 0);
+  const commonLabels = sortCounts(labelCounts).slice(0, 12);
+  const commonPaths = sortCounts(pathCounts).slice(0, 12);
+  const bundleTitle = uniqueProjects.length === 1
+    ? `Session bundle: ${uniqueProjects[0]}`
+    : `Session bundle: ${details.length} selected sessions`;
+
+  const lines: string[] = [];
+  lines.push("---");
+  lines.push("bundle_type: \"session_bundle\"");
+  lines.push(`session_count: ${details.length}`);
+  if (startTimestamps[0]) lines.push(`date_range_start: ${JSON.stringify(startTimestamps[0])}`);
+  if (updatedTimestamps.length) lines.push(`date_range_end: ${JSON.stringify(updatedTimestamps.at(-1))}`);
+  if (uniqueProjects.length) {
+    lines.push("projects:");
+    for (const project of uniqueProjects) lines.push(`  - ${JSON.stringify(project)}`);
+  }
+  lines.push("session_files:");
+  for (const detail of details) lines.push(`  - ${JSON.stringify(detail.sessionFile)}`);
+  lines.push("---");
+  lines.push("");
+  lines.push(`# ${bundleTitle}`);
+  lines.push("");
+  lines.push(`- Sessions: ${details.length}`);
+  if (uniqueProjects.length) lines.push(`- Projects: ${uniqueProjects.join(", ")}`);
+  if (startTimestamps[0] && updatedTimestamps.length) {
+    lines.push(`- Date range: ${startTimestamps[0]} → ${updatedTimestamps.at(-1)}`);
+  }
+  lines.push(`- Message totals: ${totalUserMessages} user · ${totalAssistantMessages} assistant · ${totalEntries} total entries`);
+  lines.push(`- Structure totals: ${totalBranches} branches · ${totalCompactions} compactions · ${totalBranchSummaries} branch summaries`);
+
+  lines.push("");
+  lines.push("## Source sessions");
+  lines.push("");
+  details.forEach((detail, index) => {
+    const title = getSessionNoteTitle(detail);
+    lines.push(`${index + 1}. **${title}** — ${displayPath(detail.cwd)} · ${detail.updatedAt}`);
+    lines.push(`   - Session file: \`${detail.sessionFile}\``);
+    lines.push(`   - Resume: \`${detail.resumeCommand}\``);
+  });
+
+  if (commonLabels.length) {
+    lines.push("");
+    lines.push("## Common labels");
+    lines.push("");
+    for (const [label, count] of commonLabels) {
+      lines.push(`- ${label} (${count}/${details.length} sessions)`);
+    }
+  }
+
+  if (commonPaths.length) {
+    lines.push("");
+    lines.push("## Frequent path mentions");
+    lines.push("");
+    for (const [path, count] of commonPaths) {
+      lines.push(`- ${path} (${count} mentions)`);
+    }
+  }
+
+  lines.push("");
+  lines.push("## Included session notes");
+  lines.push("");
+  for (const detail of details) {
+    lines.push(demoteMarkdownHeadings(detail.noteMarkdown, 2));
+    lines.push("");
+  }
+
+  return lines.join("\n").trim();
 }
 
 async function* iterSessionFiles(dir: string): AsyncGenerator<string> {
@@ -773,33 +893,7 @@ export class SessionIndex {
     this.lastIndexedAt = new Date().toISOString();
   }
 
-  getProjects(): SessionProject[] {
-    const grouped = new Map<string, SessionProject>();
-    for (const { summary } of this.entries.values()) {
-      const existing = grouped.get(summary.projectId);
-      if (!existing) {
-        grouped.set(summary.projectId, {
-          projectId: summary.projectId,
-          projectLabel: summary.projectLabel,
-          sessionCount: 1,
-          latestUpdatedAt: summary.updatedAt,
-        });
-        continue;
-      }
-      existing.sessionCount += 1;
-      if (!existing.latestUpdatedAt || existing.latestUpdatedAt < summary.updatedAt) {
-        existing.latestUpdatedAt = summary.updatedAt;
-      }
-    }
-
-    return Array.from(grouped.values()).sort((a, b) => {
-      const timeA = a.latestUpdatedAt ?? "";
-      const timeB = b.latestUpdatedAt ?? "";
-      return timeA === timeB ? a.projectLabel.localeCompare(b.projectLabel) : timeB.localeCompare(timeA);
-    });
-  }
-
-  getSessions(options?: { projectId?: string; query?: string; limit?: number }): SessionSearchResult[] {
+  private collectSessionResults(options?: { projectId?: string; query?: string; limit?: number }): SessionSearchResult[] {
     const parsedQuery = parseQuery(options?.query);
     let sessions = Array.from(this.entries.values()).map((entry) => entry.summary);
 
@@ -810,7 +904,9 @@ export class SessionIndex {
     let results: SessionSearchResult[] = sessions.map((summary) => ({ ...summary }));
 
     if (parsedQuery.raw || parsedQuery.labelTerms.length || parsedQuery.projectTerms.length) {
-      const dbHits = this.searchDb.search(parsedQuery.freeTerms, Math.max((options?.limit ?? 200) * 4, 200));
+      const baseLimit = options?.limit ?? this.entries.size ?? 1;
+      const searchLimit = Math.max(baseLimit * 4, 200);
+      const dbHits = this.searchDb.search(parsedQuery.freeTerms, searchLimit);
       const dbHitMap = new Map(dbHits.map((hit) => [hit.sessionFile, hit]));
 
       const matchedResults: SessionSearchResult[] = [];
@@ -839,7 +935,68 @@ export class SessionIndex {
       results.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     }
 
-    return results.slice(0, options?.limit ?? 200);
+    return results;
+  }
+
+  getProjects(options?: { query?: string }): SessionProject[] {
+    const grouped = new Map<string, SessionProject>();
+    for (const { summary } of this.entries.values()) {
+      const existing = grouped.get(summary.projectId);
+      if (!existing) {
+        grouped.set(summary.projectId, {
+          projectId: summary.projectId,
+          projectLabel: summary.projectLabel,
+          sessionCount: 1,
+          latestUpdatedAt: summary.updatedAt,
+        });
+        continue;
+      }
+      existing.sessionCount += 1;
+      if (!existing.latestUpdatedAt || existing.latestUpdatedAt < summary.updatedAt) {
+        existing.latestUpdatedAt = summary.updatedAt;
+      }
+    }
+
+    const hasQuery = Boolean(options?.query?.trim());
+    if (!hasQuery) {
+      return Array.from(grouped.values()).sort((a, b) => {
+        const timeA = a.latestUpdatedAt ?? "";
+        const timeB = b.latestUpdatedAt ?? "";
+        return timeA === timeB ? a.projectLabel.localeCompare(b.projectLabel) : timeB.localeCompare(timeA);
+      });
+    }
+
+    const matchedSessions = this.collectSessionResults({ query: options?.query, limit: this.entries.size });
+    const matchingCounts = new Map<string, number>();
+    const latestMatchingByProject = new Map<string, string>();
+
+    for (const summary of matchedSessions) {
+      matchingCounts.set(summary.projectId, (matchingCounts.get(summary.projectId) ?? 0) + 1);
+      const currentLatest = latestMatchingByProject.get(summary.projectId);
+      if (!currentLatest || currentLatest < summary.updatedAt) {
+        latestMatchingByProject.set(summary.projectId, summary.updatedAt);
+      }
+    }
+
+    return Array.from(grouped.values())
+      .map((project) => ({
+        ...project,
+        matchingSessionCount: matchingCounts.get(project.projectId) ?? 0,
+        latestMatchingUpdatedAt: latestMatchingByProject.get(project.projectId),
+      }))
+      .sort((a, b) => {
+        const matchesA = a.matchingSessionCount ?? 0;
+        const matchesB = b.matchingSessionCount ?? 0;
+        if (matchesA !== matchesB) return matchesB - matchesA;
+
+        const timeA = a.latestMatchingUpdatedAt ?? a.latestUpdatedAt ?? "";
+        const timeB = b.latestMatchingUpdatedAt ?? b.latestUpdatedAt ?? "";
+        return timeA === timeB ? a.projectLabel.localeCompare(b.projectLabel) : timeB.localeCompare(timeA);
+      });
+  }
+
+  getSessions(options?: { projectId?: string; query?: string; limit?: number }): SessionSearchResult[] {
+    return this.collectSessionResults(options).slice(0, options?.limit ?? 200);
   }
 
   async getSessionDetail(sessionFile: string): Promise<SessionDetail | undefined> {
@@ -969,7 +1126,7 @@ export class SessionIndex {
       labelByVisibleId,
       activeLeafId: lastVisibleId,
     });
-    const distillFileName = buildDistillFileName(existing.summary);
+    const noteFileName = buildNoteFileName(existing.summary);
 
     const detailBase = {
       ...existing.summary,
@@ -981,12 +1138,12 @@ export class SessionIndex {
       pathMentions,
       treeStats,
       tree,
-      distillFileName,
+      noteFileName,
     };
 
     const detail: SessionDetail = {
       ...detailBase,
-      handoffMarkdown: buildHandoffMarkdown({
+      noteMarkdown: buildSessionNoteMarkdown({
         summary: existing.summary,
         previewEntries,
         omittedEntryCount,
@@ -1001,15 +1158,36 @@ export class SessionIndex {
     return detail;
   }
 
-  async writeDistill(sessionFile: string, distillDir: string): Promise<{ path: string; markdown: string; session: SessionDetail } | undefined> {
+  private async getSessionDetails(sessionFiles: string[]): Promise<SessionDetail[]> {
+    const details: SessionDetail[] = [];
+    for (const sessionFile of Array.from(new Set(sessionFiles.filter(Boolean)))) {
+      const detail = await this.getSessionDetail(sessionFile);
+      if (detail) details.push(detail);
+    }
+    return details;
+  }
+
+  async writeNote(sessionFile: string, notesDir: string): Promise<{ path: string; markdown: string; session: SessionDetail } | undefined> {
     const detail = await this.getSessionDetail(sessionFile);
     if (!detail) return undefined;
 
-    await fs.mkdir(distillDir, { recursive: true });
-    const outPath = join(distillDir, detail.distillFileName);
-    const markdown = buildDistillMarkdown(detail);
+    await fs.mkdir(notesDir, { recursive: true });
+    const outPath = join(notesDir, detail.noteFileName);
+    const markdown = buildSavedSessionNoteMarkdown(detail);
     await fs.writeFile(outPath, markdown, "utf8");
     return { path: outPath, markdown, session: detail };
+  }
+
+  async writeBundle(sessionFiles: string[], notesDir: string): Promise<{ path: string; markdown: string; fileName: string; sessions: SessionDetail[] } | undefined> {
+    const details = await this.getSessionDetails(sessionFiles);
+    if (!details.length) return undefined;
+
+    await fs.mkdir(notesDir, { recursive: true });
+    const fileName = buildBundleFileName(details);
+    const outPath = join(notesDir, fileName);
+    const markdown = buildSessionBundleMarkdown(details);
+    await fs.writeFile(outPath, markdown, "utf8");
+    return { path: outPath, markdown, fileName, sessions: details };
   }
 
   getStats(): { sessions: number; indexedDocs: number; projects: number; lastIndexedAt?: string; sessionsDir: string; indexDbPath: string } {

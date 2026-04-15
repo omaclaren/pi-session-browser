@@ -10,10 +10,11 @@
     <header class="topbar">
       <div class="topbar-brand">
         <h1>pi session browser</h1>
-        <p class="muted">Search, preview, and distill your local pi sessions.</p>
+        <p class="muted">Search, browse, and save notes or bundles from your local pi sessions.</p>
       </div>
       <div class="topbar-actions">
         <input id="search" type="search" placeholder="Search sessions... (supports label: and project:)" aria-label="Search sessions" autocomplete="off">
+        <button id="change-notes-dir" class="notes-dir-button">Notes folder…</button>
         <button id="refresh" class="button-primary">Refresh</button>
       </div>
     </header>
@@ -32,6 +33,7 @@
           <h2>Sessions</h2>
           <span id="session-count" class="muted small"></span>
         </div>
+        <div id="session-selection-bar" class="selection-toolbar"></div>
         <div id="sessions" class="list sessions"></div>
       </section>
 
@@ -43,6 +45,43 @@
         <div id="detail" class="detail hidden"></div>
       </section>
     </main>
+
+    <dialog id="notes-dir-dialog" class="modal-dialog">
+      <form id="notes-dir-form" class="modal-form" method="dialog">
+        <div class="modal-header">
+          <h2>Change notes folder</h2>
+          <p class="muted small">Choose where saved notes and bundles should go for this browser.</p>
+        </div>
+
+        <label class="modal-label" for="notes-dir-input">Folder path</label>
+        <input id="notes-dir-input" name="notesDir" type="text" autocomplete="off" spellcheck="false">
+
+        <fieldset class="modal-fieldset">
+          <legend>Save setting in</legend>
+          <label class="radio-row">
+            <input type="radio" name="notesScope" value="global" checked>
+            <span>
+              <strong>Global</strong>
+              <span id="notes-global-path" class="muted small"></span>
+            </span>
+          </label>
+          <label class="radio-row">
+            <input type="radio" name="notesScope" value="project">
+            <span>
+              <strong>Project-local</strong>
+              <span id="notes-project-path" class="muted small"></span>
+            </span>
+          </label>
+        </fieldset>
+
+        <p id="notes-dir-status" class="muted small"></p>
+
+        <div class="modal-actions">
+          <button type="button" id="notes-dir-cancel">Cancel</button>
+          <button type="submit" id="notes-dir-save" class="button-primary">Save folder</button>
+        </div>
+      </form>
+    </dialog>
 
     <script type="module" src="/app.js"></script>
   </body>
