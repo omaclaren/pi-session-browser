@@ -1,83 +1,66 @@
 # pi-session-browser
 
-Local web UI for exploring, searching, and saving notes or bundles from pi sessions.
+Local web UI for exploring, searching, and saving notes or bundles from [pi](https://github.com/badlogic/pi-mono) sessions.
 
-## Status
+## Why
 
-Early MVP.
+Pi stores every conversation as a JSONL session file. Over time you end up with hundreds of sessions across many projects. This tool gives you a fast, searchable, local browser for all of them — no cloud, no uploads, everything stays on your machine.
 
-Current features:
-- scan `~/.pi/agent/sessions`
+## Features
+
+- scan `~/.pi/agent/sessions` (or custom path)
 - group sessions by project / cwd
-- SQLite FTS5-backed search over session metadata and extracted text snippets
+- SQLite FTS5-backed full-text search with `label:` and `project:` filters
 - full-text indexing of compaction and branch summaries for better long-session recall
-- query syntax with `label:` and `project:` filters
-- persistent local search index in `.cache/sessions.sqlite`
-- relevance scoring for search results
-- preview selected sessions in the browser
+- conversation view with timeline + branch modes
 - tree-aware stats: branch points, compactions, branch summaries, labels
-- visible session tree view with active-path highlighting
-- tree focus modes: all, active path, branches + labels
-- jump from recent labeled checkpoints straight into the tree
-- assistant tool-call turns summarised in the tree (e.g. `read ×3`, `bash ×2`)
-- search snippets can surface summary hits directly (e.g. `[compaction] ...`, `[branch summary] ...`)
-- extract recent labeled checkpoints and key path mentions
-- copy a local deep link
-- copy a `pi --session ...` resume command
-- copy a markdown session note for passing context forward
-- save a markdown session note to a local notes directory
-- multi-select sessions across projects/views and save a deterministic markdown bundle
-
-Planned next:
-- cached model-generated summaries
-- deeper branch-tree ergonomics (folding, subtree collapse, branch diff/focus)
-- optional pi-extension bridge for opening the current browser selection or bundle inside pi
+- jump from labeled checkpoints into the branch view
+- copy deep link, resume command, or session note
+- save session notes to disk
+- multi-select sessions across projects and save a deterministic markdown bundle
+- query-aware project list with match counts
+- adapts to your active pi theme automatically
 
 ## Run
 
 ```bash
+git clone https://github.com/omaclaren/pi-session-browser.git
+cd pi-session-browser
 npm install
-npm start
+npm start -- --open
 ```
 
-Open:
+Or without `--open`, visit:
 
-```text
+```
 http://127.0.0.1:4314
 ```
 
-Optional flags:
+### Flags
 
 ```bash
-npm start -- --open
-npm start -- --port 4315
-npm start -- --sessions-dir "/custom/path/to/sessions"
-npm start -- --index-db "/custom/path/to/index.sqlite"
-npm start -- --notes-dir "/custom/path/to/notes"
+npm start -- --open                                  # open browser on launch
+npm start -- --port 4315                             # custom port
+npm start -- --sessions-dir "/path/to/sessions"      # custom sessions directory
+npm start -- --index-db "/path/to/index.sqlite"      # custom index location
+npm start -- --notes-dir "/path/to/notes"            # custom notes directory
 ```
 
-Supported environment variables:
+### Environment variables
 
 - `PI_SESSION_BROWSER_PORT`
 - `PI_SESSION_BROWSER_SESSIONS_DIR`
 - `PI_SESSION_BROWSER_INDEX_DB`
 - `PI_SESSION_BROWSER_NOTES_DIR`
 
-Legacy note-directory aliases are still accepted for backward compatibility:
-
-- `--distill-dir`
-- `PI_SESSION_BROWSER_DISTILL_DIR`
-
 ## Settings
 
-Pi-session-browser follows a pi-like global/project configuration style.
-
-Settings files:
+Follows a pi-like global/project configuration style.
 
 - Global: `~/.pi-session-browser/settings.json`
 - Project-local: `.pi-session-browser/settings.json`
 
-Supported keys:
+Example:
 
 ```json
 {
@@ -88,20 +71,19 @@ Supported keys:
 }
 ```
 
-Notes:
+Relative paths in settings files are resolved relative to the settings file location.
 
-- relative paths in settings files are resolved relative to the settings file location
-- CLI flags override environment variables
-- environment variables override project settings
-- project settings override global settings
-- global settings override built-in defaults
-- `distillDir` in settings is still accepted as a legacy alias for `notesDir`
+Config precedence: CLI flags → env vars → project settings → global settings → built-in defaults.
 
 Built-in defaults:
 
-- Notes: `~/.pi-session-browser/notes`
-- Search index: `~/.cache/pi-session-browser/sessions.sqlite`
-- Sessions: `~/.pi/agent/sessions`
+| Setting | Default |
+|---------|---------|
+| Notes | `~/.pi-session-browser/notes` |
+| Search index | `~/.cache/pi-session-browser/sessions.sqlite` |
+| Sessions | `~/.pi/agent/sessions` |
+
+You can also change the notes folder from the browser UI at runtime.
 
 ## Development
 
@@ -109,3 +91,7 @@ Built-in defaults:
 npm run typecheck
 npm start -- --open
 ```
+
+## License
+
+MIT
