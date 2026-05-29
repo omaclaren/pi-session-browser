@@ -503,7 +503,7 @@ function renderSearchMatches(session) {
         <h3>Search matches</h3>
         <span class="tag">${matches.length} shown</span>
       </div>
-      <p class="muted small">Showing matching turns with one neighbouring turn on each side where available.</p>
+      <p class="muted small">Showing matching turns with one neighbouring turn on each side where available. Copy /tree handoff opens the original session manually; Create fork makes a new session file from root to this entry.</p>
       <div class="search-match-list">
         ${matches.map((match, index) => `
           <details class="search-match" ${index < 4 ? "open" : ""}>
@@ -512,8 +512,8 @@ function renderSearchMatches(session) {
               <span class="match-summary-actions">
                 ${match.timestamp ? `<time>${escapeHtml(formatDate(match.timestamp))}</time>` : ""}
                 <button class="mini-button" data-open-transcript-entry="${match.entryIndex + 1}">Open there</button>
-                <button class="mini-button" data-copy-pi-target="${index}">Copy pi target</button>
-                ${match.entryId ? `<button class="mini-button" data-fork-entry="${escapeHtml(match.entryId)}">Fork here</button>` : ""}
+                <button class="mini-button" data-copy-pi-target="${index}">Copy /tree handoff</button>
+                ${match.entryId ? `<button class="mini-button" data-fork-entry="${escapeHtml(match.entryId)}">Create fork</button>` : ""}
               </span>
             </summary>
             <div class="search-context-list">
@@ -1110,7 +1110,7 @@ function renderDetail(session) {
       const matchIndex = Number.parseInt(button.dataset.copyPiTarget || "", 10);
       const match = session.searchMatches?.[matchIndex];
       if (!match) return;
-      copyText(buildPiTreeTarget(session, match), button, "Pi target copied");
+      copyText(buildPiTreeTarget(session, match), button, "Handoff copied");
     });
   });
 
@@ -1127,7 +1127,7 @@ function renderDetail(session) {
           body: JSON.stringify({ path: session.sessionFile, entryId }),
         });
         await navigator.clipboard.writeText(result.resumeCommand);
-        button.textContent = "Fork command copied";
+        button.textContent = "Fork created + copied";
         await loadStats();
       });
     });
