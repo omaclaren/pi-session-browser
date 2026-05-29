@@ -10,7 +10,7 @@ Pi stores every conversation as a JSONL session file. Over time you end up with 
 
 - scan `~/.pi/agent/sessions` (or custom path)
 - group sessions by project / cwd
-- SQLite FTS5-backed full-text search with `label:` and `project:` filters
+- live SQLite FTS5-backed full-text search with `label:` and `project:` filters
 - full-text indexing of compaction and branch summaries for better long-session recall
 - conversation view with timeline + branch modes
 - tree-aware stats: branch points, compactions, branch summaries, labels
