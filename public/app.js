@@ -210,6 +210,13 @@ function setHashForSession(sessionFile) {
   window.history.replaceState({}, "", url);
 }
 
+function buildTranscriptUrl(sessionFile) {
+  const url = new URL("/transcript", window.location.origin);
+  url.searchParams.set("path", sessionFile);
+  if (state.query) url.searchParams.set("q", state.query);
+  return url.toString();
+}
+
 function getHashSession() {
   const hash = window.location.hash.replace(/^#/, "");
   const params = new URLSearchParams(hash);
@@ -855,6 +862,7 @@ function renderDetail(session) {
       <div class="actions">
         <button id="copy-link" class="action-button">Copy link</button>
         <button id="copy-resume" class="action-button">Copy resume command</button>
+        <button id="open-transcript" class="action-button">Open full transcript</button>
         <button id="copy-note" class="action-button">Copy note</button>
         <button id="save-note" class="action-button button-primary">Save note</button>
       </div>
@@ -985,6 +993,7 @@ function renderDetail(session) {
 
   const copyLinkButton = els.detail.querySelector("#copy-link");
   const copyResumeButton = els.detail.querySelector("#copy-resume");
+  const openTranscriptButton = els.detail.querySelector("#open-transcript");
   const copyNoteButton = els.detail.querySelector("#copy-note");
   const saveNoteButton = els.detail.querySelector("#save-note");
   const clearFocusButton = els.detail.querySelector("#clear-tree-focus");
@@ -995,6 +1004,10 @@ function renderDetail(session) {
 
   copyResumeButton.addEventListener("click", () => {
     copyText(session.resumeCommand, copyResumeButton, "Command copied");
+  });
+
+  openTranscriptButton.addEventListener("click", () => {
+    window.open(buildTranscriptUrl(session.sessionFile), "_blank", "noopener");
   });
 
   copyNoteButton.addEventListener("click", () => {

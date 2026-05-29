@@ -136,6 +136,108 @@ function text(res: ServerResponse, status: number, body: string): void {
   res.end(body);
 }
 
+function html(res: ServerResponse, status: number, body: string): void {
+  res.writeHead(status, {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  res.end(body);
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function queryTerms(query: string | undefined): string[] {
+  const terms = new Set<string>();
+  for (const token of (query ?? "").split(/\s+/).filter(Boolean)) {
+    if (/^(label|project|cwd):/i.test(token)) continue;
+    for (const piece of token.toLowerCase().split(/[^a-z0-9]+/)) {
+      if (piece) terms.add(piece);
+    }
+  }
+  return Array.from(terms);
+}
+
+function highlightHtml(textValue: string, terms: string[]): string {
+  if (!terms.length) return escapeHtml(textValue);
+  const pattern = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi");
+  return textValue.split(pattern).map((part) => {
+    const matched = terms.some((term) => part.toLowerCase() === term.toLowerCase());
+    return matched ? `<mark>${escapeHtml(part)}</mark>` : escapeHtml(part);
+  }).join("");
+}
+
+function renderTranscriptPage(transcript: Awaited<ReturnType<SessionIndex["getTranscript"]>>, query: string | undefined): string {
+  if (!transcript) return "";
+  const terms = queryTerms(query);
+  const title = transcript.summary.sessionName
+    ?? transcript.summary.firstUserPrompt
+    ?? transcript.summary.projectLabel
+    ?? "Session transcript";
+  const entries = transcript.entries.map((entry, index) => {
+    const roleClass = entry.role.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    return `
+      <article class="entry role-${escapeHtml(roleClass)}" id="entry-${index + 1}">
+        <div class="entry-meta">
+          <a href="#entry-${index + 1}">#${index + 1}</a>
+          <span>${escapeHtml(entry.role)}</span>
+          ${entry.timestamp ? `<time>${escapeHtml(entry.timestamp)}</time>` : ""}
+        </div>
+        <div class="entry-text">${highlightHtml(entry.text, terms)}</div>
+      </article>
+    `;
+  }).join("\n");
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(title)} · transcript</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #ffffff; --panel: #f6f8fa; --surface: #ffffff; --border: #d0d7de; --text: #0e1116; --muted: #656e77; --accent: #1b7c83; --highlight: rgba(241,187,121,0.24); }
+    @media (prefers-color-scheme: dark) { :root { --bg: #181818; --panel: #1f1f1f; --surface: #1a1a1a; --border: #363636; --text: #d5d0c9; --muted: #88847f; --accent: #42d9c5; --highlight: rgba(241,187,121,0.20); } }
+    * { box-sizing: border-box; }
+    html { font-size: 90%; }
+    body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; background: var(--bg); color: var(--text); }
+    header { position: sticky; top: 0; z-index: 2; padding: 1rem 1.2rem; border-bottom: 1px solid var(--border); background: var(--bg); }
+    h1 { margin: 0; font-size: clamp(1.25rem, 2vw, 1.7rem); line-height: 1.15; letter-spacing: -0.03em; }
+    .meta { margin-top: 0.45rem; color: var(--muted); font-size: 0.9rem; display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; }
+    main { width: min(110rem, 100%); margin: 0 auto; padding: 1rem; display: grid; gap: 0.75rem; }
+    .entry { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); overflow: hidden; }
+    .entry-meta { display: flex; flex-wrap: wrap; gap: 0.45rem 0.75rem; align-items: baseline; padding: 0.65rem 0.8rem; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+    .entry-meta a { color: var(--accent); text-decoration: none; }
+    .entry-meta time { font-weight: 500; letter-spacing: 0; text-transform: none; }
+    .entry-text { padding: 0.85rem 0.95rem; white-space: pre-wrap; word-break: break-word; }
+    .role-user { border-color: color-mix(in srgb, var(--accent), var(--border) 55%); }
+    .role-toolresult, .role-tool-result, .role-compaction-summary, .role-branch-summary { background: var(--panel); }
+    mark { padding: 0 0.08em; border-radius: 0.22em; background: var(--highlight); color: var(--text); box-shadow: inset 0 -0.12em 0 #f1bb79; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>${escapeHtml(title)}</h1>
+    <div class="meta">
+      <span>${transcript.entries.length} transcript entries</span>
+      <span>${escapeHtml(transcript.summary.projectLabel)}</span>
+      <span>${escapeHtml(transcript.summary.updatedAt)}</span>
+      ${terms.length ? `<span>highlighting: ${terms.map(escapeHtml).join(", ")}</span>` : ""}
+    </div>
+  </header>
+  <main>${entries || `<p>No transcript entries found.</p>`}</main>
+</body>
+</html>`;
+}
+
 function omitSearchText<T extends { searchText?: string }>(session: T): Omit<T, "searchText"> {
   const { searchText: _searchText, ...rest } = session;
   return rest;
@@ -348,6 +450,22 @@ async function main(): Promise<void> {
         return;
       }
       json(res, 200, { session: omitSearchText(detail) });
+      return;
+    }
+
+    if (pathname === "/transcript") {
+      const sessionFile = searchParams.get("path");
+      const query = searchParams.get("q") ?? undefined;
+      if (!sessionFile) {
+        text(res, 400, "Missing path");
+        return;
+      }
+      const transcript = await index.getTranscript(sessionFile);
+      if (!transcript) {
+        text(res, 404, "Session not found");
+        return;
+      }
+      html(res, 200, renderTranscriptPage(transcript, query));
       return;
     }
 

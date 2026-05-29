@@ -46,6 +46,17 @@ export type SessionSearchMatch = {
   context: SessionSearchMatchContextEntry[];
 };
 
+export type SessionTranscriptEntry = {
+  role: string;
+  timestamp?: string;
+  text: string;
+};
+
+export type SessionTranscript = {
+  summary: SessionSummary;
+  entries: SessionTranscriptEntry[];
+};
+
 export type SessionSearchResult = SessionSummary & {
   matchSnippet?: string;
   score?: number;

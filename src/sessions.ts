@@ -14,6 +14,7 @@ import type {
   SessionSearchMatch,
   SessionSearchResult,
   SessionSummary,
+  SessionTranscript,
   SessionTreeNode,
   SessionTreeStats,
 } from "./types.js";
@@ -1060,6 +1061,49 @@ export class SessionIndex {
 
   getSessions(options?: { projectId?: string; query?: string; limit?: number }): SessionSearchResult[] {
     return this.collectSessionResults(options).slice(0, options?.limit ?? 200);
+  }
+
+  async getTranscript(sessionFile: string): Promise<SessionTranscript | undefined> {
+    const existing = this.entries.get(sessionFile);
+    if (!existing) return undefined;
+
+    const entries: SessionTranscript["entries"] = [];
+    const stream = createReadStream(sessionFile, { encoding: "utf8" });
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+
+    for await (const line of rl) {
+      const entry = safeJsonParse(line);
+      if (!entry) continue;
+
+      if (entry.type === "message") {
+        const message = entry.message as PiMessageLike | undefined;
+        const role = message?.role ?? "message";
+        const text = extractMessageText(message);
+        if (!text) continue;
+        entries.push({ role, timestamp: entry.timestamp, text });
+        continue;
+      }
+
+      if (entry.type === "branch_summary" && typeof entry.summary === "string") {
+        entries.push({ role: "branch summary", timestamp: entry.timestamp, text: entry.summary });
+        continue;
+      }
+
+      if (entry.type === "compaction" && typeof entry.summary === "string") {
+        entries.push({ role: "compaction summary", timestamp: entry.timestamp, text: entry.summary });
+        continue;
+      }
+
+      if (entry.type === "custom_message" && typeof entry.content === "string") {
+        entries.push({
+          role: entry.customType ? `custom:${entry.customType}` : "custom",
+          timestamp: entry.timestamp,
+          text: entry.content,
+        });
+      }
+    }
+
+    return { summary: existing.summary, entries };
   }
 
   async getSessionDetail(sessionFile: string, query?: string): Promise<SessionDetail | undefined> {

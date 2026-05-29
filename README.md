@@ -20,6 +20,7 @@ Pi stores every conversation as a JSONL session file. Over time you end up with 
 - multi-select sessions across projects and save a deterministic markdown bundle
 - query-aware project list with match counts
 - inspect search matches with surrounding transcript context
+- open the full transcript in a scrollable browser tab
 - adapts to your active pi theme automatically
 
 ## Run
