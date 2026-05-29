@@ -44,6 +44,30 @@ function escapeHtml(text = "") {
     .replaceAll('"', "&quot;");
 }
 
+function escapeRegExp(text = "") {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getSearchTerms(query = state.query) {
+  const terms = new Set();
+  for (const token of String(query || "").split(/\s+/).filter(Boolean)) {
+    if (/^(label|project|cwd):/i.test(token)) continue;
+    for (const piece of token.toLowerCase().split(/[^a-z0-9]+/)) {
+      if (piece) terms.add(piece);
+    }
+  }
+  return Array.from(terms);
+}
+
+function highlightText(text = "", terms = getSearchTerms()) {
+  if (!terms.length) return escapeHtml(text);
+  const pattern = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi");
+  return String(text).split(pattern).map((part) => {
+    const matched = terms.some((term) => part.toLowerCase() === term.toLowerCase());
+    return matched ? `<mark>${escapeHtml(part)}</mark>` : escapeHtml(part);
+  }).join("");
+}
+
 function normalizeWhitespace(text = "") {
   return String(text).replace(/\s+/g, " ").trim();
 }
@@ -374,6 +398,52 @@ function renderTimelineEntries(session) {
   `;
 }
 
+function renderSearchMatches(session) {
+  const terms = getSearchTerms();
+  if (!terms.length) return "";
+
+  const matches = session.searchMatches || [];
+  if (!matches.length) {
+    return `
+      <section class="detail-section search-matches-section">
+        <h3>Search matches</h3>
+        <p class="muted small">No direct text hits found inside this session transcript for this query. The result may have matched metadata, labels, project path, or indexed summaries.</p>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="detail-section search-matches-section">
+      <div class="section-heading-row">
+        <h3>Search matches</h3>
+        <span class="tag">${matches.length} shown</span>
+      </div>
+      <p class="muted small">Showing matching turns with one neighbouring turn on each side where available.</p>
+      <div class="search-match-list">
+        ${matches.map((match, index) => `
+          <details class="search-match" ${index < 4 ? "open" : ""}>
+            <summary>
+              <span>Match ${index + 1}: ${escapeHtml(match.role)}</span>
+              ${match.timestamp ? `<time>${escapeHtml(formatDate(match.timestamp))}</time>` : ""}
+            </summary>
+            <div class="search-context-list">
+              ${match.context.map((entry) => `
+                <section class="search-context-entry ${entry.matched ? "matched" : ""}">
+                  <div class="preview-entry-role">
+                    ${escapeHtml(entry.role)} ${entry.timestamp ? `<time>${escapeHtml(formatDate(entry.timestamp))}</time>` : ""}
+                    ${entry.matched ? `<span class="tag">match</span>` : ""}
+                  </div>
+                  <div class="search-context-text">${highlightText(entry.text, terms)}</div>
+                </section>
+              `).join("")}
+            </div>
+          </details>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
 async function loadTheme() {
   try {
     const data = await fetchJson("/api/theme");
@@ -495,10 +565,7 @@ async function loadSessions() {
   }
 
   if (state.selectedSessionFile && state.sessions.some((session) => session.sessionFile === state.selectedSessionFile)) {
-    renderSessions();
-    if (state.selectedSessionDetail?.sessionFile === state.selectedSessionFile) {
-      renderDetail(state.selectedSessionDetail);
-    }
+    await selectSession(state.selectedSessionFile);
     return;
   }
 
@@ -686,7 +753,7 @@ function renderSessions() {
           <div class="session-card-meta">${escapeHtml(metaParts.filter(Boolean).join(" · "))}</div>
           <div class="session-card-stats small muted">${session.userMessageCount} user · ${session.assistantMessageCount} assistant · ${session.branchPointCount} branches</div>
           ${display.secondaryText ? `<div class="session-card-body"><span class="session-card-body-label">Task</span>${escapeHtml(display.secondaryText)}</div>` : ""}
-          ${session.matchSnippet ? `<div class="snippet muted">${escapeHtml(session.matchSnippet)}</div>` : ""}
+          ${session.matchSnippet ? `<div class="snippet muted">${highlightText(session.matchSnippet)}</div>` : ""}
           ${(session.labels?.length || score) ? `<div class="tag-row">${score}${session.labels.map((label) => `<span class="tag">${escapeHtml(label)}</span>`).join("")}</div>` : ""}
         </article>
       `;
@@ -719,7 +786,9 @@ async function selectSession(sessionFile) {
   }
   setHashForSession(sessionFile);
   renderSessions();
-  const data = await fetchJson(`/api/session?path=${encodeURIComponent(sessionFile)}`);
+  const params = new URLSearchParams({ path: sessionFile });
+  if (state.query) params.set("q", state.query);
+  const data = await fetchJson(`/api/session?${params.toString()}`);
   state.selectedSessionDetail = data.session;
   if (state.focusedTreeNodeId && !findTreeNode(data.session.tree, state.focusedTreeNodeId)) {
     state.focusedTreeNodeId = null;
@@ -840,6 +909,8 @@ function renderDetail(session) {
         </div>
       </section>
     ` : ""}
+
+    ${renderSearchMatches(session)}
 
     <section class="detail-section">
       <h3>Conversation</h3>

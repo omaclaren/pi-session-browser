@@ -11,6 +11,7 @@ import type {
   SessionPreviewEntry,
   SessionProject,
   SessionSearchDocument,
+  SessionSearchMatch,
   SessionSearchResult,
   SessionSummary,
   SessionTreeNode,
@@ -52,11 +53,13 @@ type RawVisibleNode = {
 const HOME = homedir();
 const DEFAULT_SESSIONS_DIR = join(HOME, ".pi", "agent", "sessions");
 const DEFAULT_INDEX_DB = join(HOME, ".cache", "pi-session-browser", "sessions.sqlite");
-const MAX_SEARCH_SNIPPETS = 24;
-const MAX_SEARCH_TEXT_CHARS = 24_000;
+const MAX_SEARCH_SNIPPETS = 160;
+const MAX_SEARCH_TEXT_CHARS = 80_000;
 const PREVIEW_HEAD = 6;
 const PREVIEW_TAIL = 24;
 const MAX_PATH_MENTIONS = 8;
+const MAX_SESSION_SEARCH_MATCHES = 16;
+const MATCH_CONTEXT_RADIUS = 1;
 const PATH_REGEX = /(?:~\/[^\s"'`()\[\]{}<>]+|\/[^\s"'`()\[\]{}<>]+|\.\/[^\s"'`()\[\]{}<>]+)/g;
 const SPACED_PATH_REGEX = /(?:\/Users\/[^\n`]+|~\/[^\n`]+|\.\/[^\n`]+)/g;
 const BACKTICK_REGEX = /`([^`]+)`/g;
@@ -316,6 +319,66 @@ function buildSnippet(searchText: string, parsedQuery: ParsedQuery): string | un
   }
 
   return shorten(cleaned, 220);
+}
+
+function excerptAroundTerms(text: string, terms: string[], max = 1200): string {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (cleaned.length <= max) return cleaned;
+
+  const haystack = cleaned.toLowerCase();
+  const indexes = terms
+    .map((term) => haystack.indexOf(term.toLowerCase()))
+    .filter((index) => index >= 0);
+  const firstIndex = indexes.length ? Math.min(...indexes) : 0;
+  const start = Math.max(0, firstIndex - Math.floor(max * 0.35));
+  const end = Math.min(cleaned.length, start + max);
+  const prefix = start > 0 ? "..." : "";
+  const suffix = end < cleaned.length ? "..." : "";
+  return `${prefix}${cleaned.slice(start, end).trim()}${suffix}`;
+}
+
+function queryContentTerms(query: string | undefined): string[] {
+  return Array.from(new Set(parseQuery(query).freeTerms));
+}
+
+function buildSearchMatches(entries: SessionPreviewEntry[], query: string | undefined): SessionSearchMatch[] {
+  const terms = queryContentTerms(query);
+  if (!terms.length) return [];
+
+  const candidates: Array<SessionSearchMatch & { allTermsMatched: boolean }> = [];
+  for (const [index, entry] of entries.entries()) {
+    const haystack = normalize(entry.text);
+    const matchTerms = terms.filter((term) => haystack.includes(term));
+    if (!matchTerms.length) continue;
+
+    const contextStart = Math.max(0, index - MATCH_CONTEXT_RADIUS);
+    const contextEnd = Math.min(entries.length, index + MATCH_CONTEXT_RADIUS + 1);
+    const context = entries.slice(contextStart, contextEnd).map((contextEntry, contextOffset) => {
+      const contextIndex = contextStart + contextOffset;
+      const matched = contextIndex === index;
+      return {
+        role: contextEntry.role,
+        timestamp: contextEntry.timestamp,
+        matched,
+        text: excerptAroundTerms(contextEntry.text, matched ? matchTerms : terms, matched ? 1400 : 700),
+      };
+    });
+
+    candidates.push({
+      entryIndex: index,
+      role: entry.role,
+      timestamp: entry.timestamp,
+      matchTerms,
+      context,
+      allTermsMatched: matchTerms.length === terms.length,
+    });
+  }
+
+  const preferred = candidates.some((candidate) => candidate.allTermsMatched)
+    ? candidates.filter((candidate) => candidate.allTermsMatched)
+    : candidates;
+
+  return preferred.slice(0, MAX_SESSION_SEARCH_MATCHES).map(({ allTermsMatched: _allTermsMatched, ...match }) => match);
 }
 
 function matchesStructuredFilters(summary: SessionSummary, parsedQuery: ParsedQuery): boolean {
@@ -999,12 +1062,13 @@ export class SessionIndex {
     return this.collectSessionResults(options).slice(0, options?.limit ?? 200);
   }
 
-  async getSessionDetail(sessionFile: string): Promise<SessionDetail | undefined> {
+  async getSessionDetail(sessionFile: string, query?: string): Promise<SessionDetail | undefined> {
     const existing = this.entries.get(sessionFile);
     if (!existing) return undefined;
 
     const previewEntries: SessionPreviewEntry[] = [];
     const rawEntries: SessionPreviewEntry[] = [];
+    const matchEntries: SessionPreviewEntry[] = [];
     const entryInfoById = new Map<string, EntryInfo>();
     const parentById = new Map<string, string | undefined>();
     const visibleNodes: RawVisibleNode[] = [];
@@ -1037,6 +1101,7 @@ export class SessionIndex {
         const role = message?.role ?? "message";
         const text = extractMessageText(message);
         if (!text) continue;
+        matchEntries.push({ role, timestamp: entry.timestamp, text });
         const previewText = shorten(text, 800) ?? text;
         rawEntries.push({ role, timestamp: entry.timestamp, text: previewText });
         if (typeof entry.id === "string") {
@@ -1056,6 +1121,7 @@ export class SessionIndex {
 
       if ((entry.type === "branch_summary" || entry.type === "compaction") && typeof entry.summary === "string") {
         const role = entry.type === "branch_summary" ? "branch summary" : "compaction summary";
+        matchEntries.push({ role, timestamp: entry.timestamp, text: entry.summary });
         rawEntries.push({
           role,
           timestamp: entry.timestamp,
@@ -1111,6 +1177,7 @@ export class SessionIndex {
       .sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""))
       .slice(0, 8);
 
+    const searchMatches = buildSearchMatches(matchEntries, query);
     const pathMentions = extractPathMentions(rawEntries.map((entry) => entry.text));
     const deepLinkPath = buildDeepLinkPath(existing.summary.sessionFile);
     const resumeCommand = `pi --session \"${existing.summary.sessionFile}\"`;
@@ -1132,6 +1199,7 @@ export class SessionIndex {
       ...existing.summary,
       previewEntries,
       omittedEntryCount,
+      searchMatches,
       resumeCommand,
       deepLinkPath,
       recentLabels,

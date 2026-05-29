@@ -136,6 +136,11 @@ function text(res: ServerResponse, status: number, body: string): void {
   res.end(body);
 }
 
+function omitSearchText<T extends { searchText?: string }>(session: T): Omit<T, "searchText"> {
+  const { searchText: _searchText, ...rest } = session;
+  return rest;
+}
+
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -325,23 +330,24 @@ async function main(): Promise<void> {
       const query = searchParams.get("q") ?? undefined;
       const limit = Number.parseInt(searchParams.get("limit") ?? "200", 10);
       json(res, 200, {
-        sessions: index.getSessions({ projectId, query, limit: Number.isFinite(limit) ? limit : 200 }),
+        sessions: index.getSessions({ projectId, query, limit: Number.isFinite(limit) ? limit : 200 }).map(omitSearchText),
       });
       return;
     }
 
     if (pathname === "/api/session") {
       const sessionFile = searchParams.get("path");
+      const query = searchParams.get("q") ?? undefined;
       if (!sessionFile) {
         json(res, 400, { error: "Missing path" });
         return;
       }
-      const detail = await index.getSessionDetail(sessionFile);
+      const detail = await index.getSessionDetail(sessionFile, query);
       if (!detail) {
         json(res, 404, { error: "Session not found" });
         return;
       }
-      json(res, 200, { session: detail });
+      json(res, 200, { session: omitSearchText(detail) });
       return;
     }
 

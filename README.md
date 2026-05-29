@@ -19,6 +19,7 @@ Pi stores every conversation as a JSONL session file. Over time you end up with 
 - save session notes to disk
 - multi-select sessions across projects and save a deterministic markdown bundle
 - query-aware project list with match counts
+- inspect search matches with surrounding transcript context
 - adapts to your active pi theme automatically
 
 ## Run

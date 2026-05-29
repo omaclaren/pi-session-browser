@@ -34,6 +34,18 @@ export type SessionPreviewEntry = {
   text: string;
 };
 
+export type SessionSearchMatchContextEntry = SessionPreviewEntry & {
+  matched: boolean;
+};
+
+export type SessionSearchMatch = {
+  entryIndex: number;
+  role: string;
+  timestamp?: string;
+  matchTerms: string[];
+  context: SessionSearchMatchContextEntry[];
+};
+
 export type SessionSearchResult = SessionSummary & {
   matchSnippet?: string;
   score?: number;
@@ -84,6 +96,7 @@ export type SessionTreeNode = {
 export type SessionDetail = SessionSummary & {
   previewEntries: SessionPreviewEntry[];
   omittedEntryCount: number;
+  searchMatches: SessionSearchMatch[];
   noteMarkdown: string;
   resumeCommand: string;
   deepLinkPath: string;
