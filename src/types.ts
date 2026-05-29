@@ -29,17 +29,24 @@ export type SessionProject = {
 };
 
 export type SessionPreviewEntry = {
+  entryId?: string;
+  entryType?: string;
+  parentId?: string;
   role: string;
   timestamp?: string;
   text: string;
 };
 
 export type SessionSearchMatchContextEntry = SessionPreviewEntry & {
+  entryIndex: number;
   matched: boolean;
 };
 
 export type SessionSearchMatch = {
   entryIndex: number;
+  entryId?: string;
+  entryType?: string;
+  parentId?: string;
   role: string;
   timestamp?: string;
   matchTerms: string[];
@@ -47,6 +54,9 @@ export type SessionSearchMatch = {
 };
 
 export type SessionTranscriptEntry = {
+  entryId?: string;
+  entryType?: string;
+  parentId?: string;
   role: string;
   timestamp?: string;
   text: string;

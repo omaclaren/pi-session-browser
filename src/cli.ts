@@ -185,11 +185,14 @@ function renderTranscriptPage(transcript: Awaited<ReturnType<SessionIndex["getTr
     ?? "Session transcript";
   const entries = transcript.entries.map((entry, index) => {
     const roleClass = entry.role.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const entryIdAnchor = entry.entryId ? `pi-entry-${entry.entryId}` : undefined;
     return `
-      <article class="entry role-${escapeHtml(roleClass)}" id="entry-${index + 1}">
+      <article class="entry role-${escapeHtml(roleClass)}" id="entry-${index + 1}" ${entry.entryId ? `data-entry-id="${escapeHtml(entry.entryId)}"` : ""}>
+        ${entryIdAnchor ? `<a class="entry-id-anchor" id="${escapeHtml(entryIdAnchor)}" aria-hidden="true"></a>` : ""}
         <div class="entry-meta">
           <a href="#entry-${index + 1}">#${index + 1}</a>
           <span>${escapeHtml(entry.role)}</span>
+          ${entry.entryId ? `<a href="#${escapeHtml(entryIdAnchor)}" title="Pi JSONL entry id">id ${escapeHtml(entry.entryId)}</a>` : ""}
           ${entry.timestamp ? `<time>${escapeHtml(entry.timestamp)}</time>` : ""}
         </div>
         <div class="entry-text">${highlightHtml(entry.text, terms)}</div>
@@ -213,7 +216,8 @@ function renderTranscriptPage(transcript: Awaited<ReturnType<SessionIndex["getTr
     h1 { margin: 0; font-size: clamp(1.25rem, 2vw, 1.7rem); line-height: 1.15; letter-spacing: -0.03em; }
     .meta { margin-top: 0.45rem; color: var(--muted); font-size: 0.9rem; display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; }
     main { width: min(110rem, 100%); margin: 0 auto; padding: 1rem; display: grid; gap: 0.75rem; }
-    .entry { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); overflow: hidden; }
+    .entry { position: relative; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); overflow: hidden; }
+    .entry-id-anchor { position: absolute; top: -5rem; }
     .entry-meta { display: flex; flex-wrap: wrap; gap: 0.45rem 0.75rem; align-items: baseline; padding: 0.65rem 0.8rem; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
     .entry-meta a { color: var(--accent); text-decoration: none; }
     .entry-meta time { font-weight: 500; letter-spacing: 0; text-transform: none; }

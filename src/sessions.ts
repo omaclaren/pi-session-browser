@@ -278,6 +278,14 @@ function entryToVisibleNode(entry: any, order: number): RawVisibleNode | undefin
   };
 }
 
+function entryIdentity(entry: any): Pick<SessionPreviewEntry, "entryId" | "entryType" | "parentId"> {
+  return {
+    entryId: typeof entry?.id === "string" ? entry.id : undefined,
+    entryType: typeof entry?.type === "string" ? entry.type : undefined,
+    parentId: typeof entry?.parentId === "string" ? entry.parentId : undefined,
+  };
+}
+
 function displayPath(absPath: string): string {
   if (absPath.startsWith(HOME)) {
     return `~/${relative(HOME, absPath)}`;
@@ -360,6 +368,10 @@ function buildSearchMatches(entries: SessionPreviewEntry[], query: string | unde
       const contextIndex = contextStart + contextOffset;
       const matched = contextIndex === index;
       return {
+        entryIndex: contextIndex,
+        entryId: contextEntry.entryId,
+        entryType: contextEntry.entryType,
+        parentId: contextEntry.parentId,
         role: contextEntry.role,
         timestamp: contextEntry.timestamp,
         matched,
@@ -369,6 +381,9 @@ function buildSearchMatches(entries: SessionPreviewEntry[], query: string | unde
 
     candidates.push({
       entryIndex: index,
+      entryId: entry.entryId,
+      entryType: entry.entryType,
+      parentId: entry.parentId,
       role: entry.role,
       timestamp: entry.timestamp,
       matchTerms,
@@ -1107,22 +1122,23 @@ export class SessionIndex {
         const role = message?.role ?? "message";
         const text = extractMessageText(message);
         if (!text) continue;
-        entries.push({ role, timestamp: entry.timestamp, text });
+        entries.push({ ...entryIdentity(entry), role, timestamp: entry.timestamp, text });
         continue;
       }
 
       if (entry.type === "branch_summary" && typeof entry.summary === "string") {
-        entries.push({ role: "branch summary", timestamp: entry.timestamp, text: entry.summary });
+        entries.push({ ...entryIdentity(entry), role: "branch summary", timestamp: entry.timestamp, text: entry.summary });
         continue;
       }
 
       if (entry.type === "compaction" && typeof entry.summary === "string") {
-        entries.push({ role: "compaction summary", timestamp: entry.timestamp, text: entry.summary });
+        entries.push({ ...entryIdentity(entry), role: "compaction summary", timestamp: entry.timestamp, text: entry.summary });
         continue;
       }
 
       if (entry.type === "custom_message" && typeof entry.content === "string") {
         entries.push({
+          ...entryIdentity(entry),
           role: entry.customType ? `custom:${entry.customType}` : "custom",
           timestamp: entry.timestamp,
           text: entry.content,
@@ -1172,9 +1188,10 @@ export class SessionIndex {
         const role = message?.role ?? "message";
         const text = extractMessageText(message);
         if (!text) continue;
-        matchEntries.push({ role, timestamp: entry.timestamp, text });
+        const identity = entryIdentity(entry);
+        matchEntries.push({ ...identity, role, timestamp: entry.timestamp, text });
         const previewText = shorten(text, 800) ?? text;
-        rawEntries.push({ role, timestamp: entry.timestamp, text: previewText });
+        rawEntries.push({ ...identity, role, timestamp: entry.timestamp, text: previewText });
         if (typeof entry.id === "string") {
           entryInfoById.set(entry.id, { role, text: shorten(text, 180) ?? text });
         }
@@ -1192,6 +1209,7 @@ export class SessionIndex {
 
       if (entry.type === "custom_message" && typeof entry.content === "string") {
         matchEntries.push({
+          ...entryIdentity(entry),
           role: entry.customType ? `custom:${entry.customType}` : "custom",
           timestamp: entry.timestamp,
           text: entry.content,
@@ -1201,8 +1219,10 @@ export class SessionIndex {
 
       if ((entry.type === "branch_summary" || entry.type === "compaction") && typeof entry.summary === "string") {
         const role = entry.type === "branch_summary" ? "branch summary" : "compaction summary";
-        matchEntries.push({ role, timestamp: entry.timestamp, text: entry.summary });
+        const identity = entryIdentity(entry);
+        matchEntries.push({ ...identity, role, timestamp: entry.timestamp, text: entry.summary });
         rawEntries.push({
+          ...identity,
           role,
           timestamp: entry.timestamp,
           text: shorten(entry.summary, 800) ?? entry.summary,

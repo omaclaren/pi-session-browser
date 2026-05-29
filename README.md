@@ -21,7 +21,8 @@ Pi stores every conversation as a JSONL session file. Over time you end up with 
 - query-aware project list with match counts
 - sort results by smart/default ordering, best match, newest, oldest, or most entries
 - inspect search matches with surrounding transcript context
-- open the full transcript in a scrollable browser tab
+- open the full transcript in a scrollable browser tab with pi entry IDs
+- copy a pi `/tree` target handoff from any search match
 - adapts to your active pi theme automatically
 
 ## Run

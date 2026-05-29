@@ -220,6 +220,36 @@ function buildTranscriptUrl(sessionFile, entryNumber) {
   return url.toString();
 }
 
+function buildPiTreeTarget(session, match) {
+  const entryNumber = Number.isFinite(match?.entryIndex) ? match.entryIndex + 1 : undefined;
+  const matchedContext = match?.context?.find((entry) => entry.matched) || match?.context?.[0];
+  const excerpt = truncateText(matchedContext?.text || "", 900);
+  const transcriptUrl = buildTranscriptUrl(session.sessionFile, entryNumber);
+  const lines = [
+    "Open this pi session:",
+    session.resumeCommand,
+    "",
+    "Target from pi-session-browser:",
+    `- Session file: ${session.sessionFile}`,
+    session.cwd ? `- Project cwd: ${session.cwd}` : undefined,
+    entryNumber ? `- Transcript entry: #${entryNumber}` : undefined,
+    match?.entryId ? `- Pi entry id: ${match.entryId}` : undefined,
+    match?.entryType ? `- Entry type: ${match.entryType}` : undefined,
+    state.query ? `- Search query: ${state.query}` : undefined,
+    match?.matchTerms?.length ? `- Matched terms: ${match.matchTerms.join(", ")}` : undefined,
+    `- Browser transcript link: ${transcriptUrl}`,
+    "",
+    "In pi:",
+    "1. Run the command above.",
+    "2. Open /tree.",
+    "3. Search for the excerpt below, or use the entry ID as a reference if using session APIs.",
+    "",
+    "Excerpt:",
+    excerpt,
+  ];
+  return lines.filter((line) => line !== undefined).join("\n");
+}
+
 function getHashSession() {
   const hash = window.location.hash.replace(/^#/, "");
   const params = new URLSearchParams(hash);
@@ -437,6 +467,7 @@ function renderSearchMatches(session) {
               <span class="match-summary-actions">
                 ${match.timestamp ? `<time>${escapeHtml(formatDate(match.timestamp))}</time>` : ""}
                 <button class="mini-button" data-open-transcript-entry="${match.entryIndex + 1}">Open there</button>
+                <button class="mini-button" data-copy-pi-target="${index}">Copy pi target</button>
               </span>
             </summary>
             <div class="search-context-list">
@@ -1023,6 +1054,17 @@ function renderDetail(session) {
       event.stopPropagation();
       const entryNumber = Number.parseInt(button.dataset.openTranscriptEntry || "", 10);
       window.open(buildTranscriptUrl(session.sessionFile, Number.isFinite(entryNumber) ? entryNumber : undefined), "_blank", "noopener");
+    });
+  });
+
+  els.detail.querySelectorAll("[data-copy-pi-target]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const matchIndex = Number.parseInt(button.dataset.copyPiTarget || "", 10);
+      const match = session.searchMatches?.[matchIndex];
+      if (!match) return;
+      copyText(buildPiTreeTarget(session, match), button, "Pi target copied");
     });
   });
 
