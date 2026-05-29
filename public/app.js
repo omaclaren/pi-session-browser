@@ -468,6 +468,7 @@ function renderSearchMatches(session) {
                 ${match.timestamp ? `<time>${escapeHtml(formatDate(match.timestamp))}</time>` : ""}
                 <button class="mini-button" data-open-transcript-entry="${match.entryIndex + 1}">Open there</button>
                 <button class="mini-button" data-copy-pi-target="${index}">Copy pi target</button>
+                ${match.entryId ? `<button class="mini-button" data-fork-entry="${escapeHtml(match.entryId)}">Fork here</button>` : ""}
               </span>
             </summary>
             <div class="search-context-list">
@@ -1065,6 +1066,25 @@ function renderDetail(session) {
       const match = session.searchMatches?.[matchIndex];
       if (!match) return;
       copyText(buildPiTreeTarget(session, match), button, "Pi target copied");
+    });
+  });
+
+  els.detail.querySelectorAll("[data-fork-entry]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const entryId = button.dataset.forkEntry;
+      if (!entryId) return;
+      await flashButton(button, "Forking…", async () => {
+        const result = await fetchJson("/api/fork", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ path: session.sessionFile, entryId }),
+        });
+        await navigator.clipboard.writeText(result.resumeCommand);
+        button.textContent = "Fork command copied";
+        await loadStats();
+      });
     });
   });
 

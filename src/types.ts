@@ -67,6 +67,16 @@ export type SessionTranscript = {
   entries: SessionTranscriptEntry[];
 };
 
+export type SessionForkResult = {
+  sourceSessionFile: string;
+  sessionFile: string;
+  sessionId: string;
+  entryId: string;
+  entryCount: number;
+  createdAt: string;
+  resumeCommand: string;
+};
+
 export type SessionSearchResult = SessionSummary & {
   matchSnippet?: string;
   score?: number;

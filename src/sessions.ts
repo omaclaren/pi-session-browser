@@ -1,11 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
-import { basename, extname, join, relative } from "node:path";
+import { basename, dirname, extname, join, relative } from "node:path";
 import readline from "node:readline";
 import { SessionSearchDb } from "./search-db.js";
 import type {
   SessionDetail,
+  SessionForkResult,
   SessionLabelRecord,
   SessionPathMention,
   SessionPreviewEntry,
@@ -834,6 +836,118 @@ function buildSessionBundleMarkdown(details: SessionDetail[]): string {
   return lines.join("\n").trim();
 }
 
+function generateForkEntryId(usedIds: Set<string>): string {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const id = randomUUID().slice(0, 8);
+    if (!usedIds.has(id)) {
+      usedIds.add(id);
+      return id;
+    }
+  }
+
+  const id = randomUUID();
+  usedIds.add(id);
+  return id;
+}
+
+type ResolvedLabel = {
+  label: string;
+  timestamp?: string;
+};
+
+async function loadSessionJsonlEntries(sessionFile: string): Promise<any[]> {
+  const raw = await fs.readFile(sessionFile, "utf8");
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => safeJsonParse(line))
+    .filter((entry): entry is any => Boolean(entry));
+}
+
+async function writeForkedSessionAtEntry(params: {
+  sourceSessionFile: string;
+  entries: any[];
+  leafId: string;
+  fallbackCwd: string;
+}): Promise<SessionForkResult> {
+  const { sourceSessionFile, entries, leafId, fallbackCwd } = params;
+  const sourceHeader = entries.find((entry) => entry?.type === "session");
+  const sessionEntries = entries.filter((entry) => entry?.type !== "session" && typeof entry?.id === "string");
+  const byId = new Map<string, any>(sessionEntries.map((entry) => [entry.id, entry]));
+
+  const path: any[] = [];
+  let cursor = byId.get(leafId);
+  while (cursor) {
+    path.unshift(cursor);
+    cursor = typeof cursor.parentId === "string" ? byId.get(cursor.parentId) : undefined;
+  }
+
+  if (!path.length) {
+    throw new Error(`Entry ${leafId} not found in session`);
+  }
+
+  const pathWithoutLabels = path.filter((entry) => entry.type !== "label");
+  const pathEntryIds = new Set(pathWithoutLabels.map((entry) => entry.id));
+  const resolvedLabels = new Map<string, ResolvedLabel>();
+  for (const entry of sessionEntries) {
+    if (entry.type !== "label" || typeof entry.targetId !== "string") continue;
+    if (typeof entry.label === "string" && entry.label.trim()) {
+      resolvedLabels.set(entry.targetId, {
+        label: entry.label.trim(),
+        timestamp: typeof entry.timestamp === "string" ? entry.timestamp : undefined,
+      });
+      continue;
+    }
+    resolvedLabels.delete(entry.targetId);
+  }
+
+  const newSessionId = randomUUID();
+  const createdAt = new Date().toISOString();
+  const fileTimestamp = createdAt.replace(/[:.]/g, "-");
+  const sessionFile = join(dirname(sourceSessionFile), `${fileTimestamp}_${newSessionId}.jsonl`);
+  const usedIds = new Set(pathEntryIds);
+  let parentId = pathWithoutLabels.at(-1)?.id ?? null;
+  const labelEntries: any[] = [];
+
+  for (const [targetId, resolved] of resolvedLabels.entries()) {
+    if (!pathEntryIds.has(targetId)) continue;
+    const labelEntry = {
+      type: "label",
+      id: generateForkEntryId(usedIds),
+      parentId,
+      timestamp: resolved.timestamp ?? createdAt,
+      targetId,
+      label: resolved.label,
+    };
+    labelEntries.push(labelEntry);
+    parentId = labelEntry.id;
+  }
+
+  const header = {
+    type: "session",
+    version: 3,
+    id: newSessionId,
+    timestamp: createdAt,
+    cwd: typeof sourceHeader?.cwd === "string" ? sourceHeader.cwd : fallbackCwd,
+    parentSession: sourceSessionFile,
+  };
+
+  const forkEntries = [header, ...pathWithoutLabels, ...labelEntries];
+  const body = `${forkEntries.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
+  await fs.writeFile(sessionFile, body, { encoding: "utf8", flag: "wx" });
+
+  return {
+    sourceSessionFile,
+    sessionFile,
+    sessionId: newSessionId,
+    entryId: leafId,
+    entryCount: forkEntries.length,
+    createdAt,
+    resumeCommand: `pi --session \"${sessionFile}\"`,
+  };
+}
+
 async function* iterSessionFiles(dir: string): AsyncGenerator<string> {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
@@ -1356,6 +1470,21 @@ export class SessionIndex {
     const markdown = buildSessionBundleMarkdown(details);
     await fs.writeFile(outPath, markdown, "utf8");
     return { path: outPath, markdown, fileName, sessions: details };
+  }
+
+  async createForkAtEntry(sessionFile: string, entryId: string): Promise<SessionForkResult | undefined> {
+    const existing = this.entries.get(sessionFile);
+    if (!existing) return undefined;
+
+    const entries = await loadSessionJsonlEntries(sessionFile);
+    const result = await writeForkedSessionAtEntry({
+      sourceSessionFile: sessionFile,
+      entries,
+      leafId: entryId,
+      fallbackCwd: existing.summary.cwd,
+    });
+    await this.refresh();
+    return result;
   }
 
   getStats(): { sessions: number; indexedDocs: number; projects: number; lastIndexedAt?: string; sessionsDir: string; indexDbPath: string } {

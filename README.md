@@ -23,6 +23,7 @@ Pi stores every conversation as a JSONL session file. Over time you end up with 
 - inspect search matches with surrounding transcript context
 - open the full transcript in a scrollable browser tab with pi entry IDs
 - copy a pi `/tree` target handoff from any search match
+- create a deterministic forked session from a search match and copy its resume command
 - adapts to your active pi theme automatically
 
 ## Run

@@ -494,6 +494,31 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (pathname === "/api/fork" && req.method === "POST") {
+      try {
+        const body = (await readJsonBody(req)) as { path?: string; entryId?: string } | undefined;
+        const sessionFile = body?.path;
+        const entryId = body?.entryId;
+        if (!sessionFile) {
+          json(res, 400, { error: "Missing path" });
+          return;
+        }
+        if (!entryId) {
+          json(res, 400, { error: "Missing entryId" });
+          return;
+        }
+        const result = await index.createForkAtEntry(sessionFile, entryId);
+        if (!result) {
+          json(res, 404, { error: "Session not found" });
+          return;
+        }
+        json(res, 200, { ok: true, ...result });
+      } catch (error) {
+        json(res, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
+
     if (pathname === "/api/bundle" && req.method === "POST") {
       try {
         const body = (await readJsonBody(req)) as { paths?: string[] } | undefined;
