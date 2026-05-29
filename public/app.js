@@ -283,9 +283,14 @@ function formatTreeStats(session) {
 }
 
 function visitTree(nodes, visit) {
-  for (const node of nodes ?? []) {
+  const stack = [...(nodes ?? [])].reverse();
+  while (stack.length) {
+    const node = stack.pop();
     visit(node);
-    visitTree(node.children ?? [], visit);
+    const children = node.children ?? [];
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push(children[index]);
+    }
   }
 }
 
@@ -309,21 +314,32 @@ function findTreeNode(nodes, targetId) {
 function findTreePathIds(nodes, targetId) {
   if (!targetId) return new Set();
 
-  const visit = (node) => {
-    if (node.id === targetId) return [node.id];
-    for (const child of node.children ?? []) {
-      const path = visit(child);
-      if (path) return [node.id, ...path];
-    }
-    return null;
-  };
+  const parentById = new Map();
+  const stack = (nodes ?? []).map((node) => ({ node, parentId: null })).reverse();
+  let found = false;
 
-  for (const root of nodes ?? []) {
-    const path = visit(root);
-    if (path) return new Set(path);
+  while (stack.length) {
+    const { node, parentId } = stack.pop();
+    parentById.set(node.id, parentId);
+    if (node.id === targetId) {
+      found = true;
+      break;
+    }
+    const children = node.children ?? [];
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push({ node: children[index], parentId: node.id });
+    }
   }
 
-  return new Set();
+  if (!found) return new Set();
+
+  const pathIds = new Set();
+  let cursor = targetId;
+  while (cursor) {
+    pathIds.add(cursor);
+    cursor = parentById.get(cursor);
+  }
+  return pathIds;
 }
 
 function filterTreeNodes(nodes, mode, focusPathIds = new Set()) {
@@ -340,11 +356,35 @@ function filterTreeNodes(nodes, mode, focusPathIds = new Set()) {
     return important || keptChildren.length > 0;
   };
 
-  return (nodes ?? []).flatMap((node) => {
-    const keptChildren = filterTreeNodes(node.children ?? [], mode, focusPathIds);
-    if (!keepMode(node, keptChildren)) return [];
-    return [{ ...node, children: keptChildren }];
-  });
+  const items = [];
+  const stack = (nodes ?? []).map((node) => ({ node, parentId: null })).reverse();
+  while (stack.length) {
+    const item = stack.pop();
+    items.push(item);
+    const children = item.node.children ?? [];
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push({ node: children[index], parentId: item.node.id });
+    }
+  }
+
+  const keptChildrenByParent = new Map();
+  const roots = [];
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const { node, parentId } = items[index];
+    const keptChildren = keptChildrenByParent.get(node.id) ?? [];
+    if (!keepMode(node, keptChildren)) continue;
+
+    const keptNode = { ...node, children: keptChildren };
+    if (parentId) {
+      const siblings = keptChildrenByParent.get(parentId) ?? [];
+      siblings.unshift(keptNode);
+      keptChildrenByParent.set(parentId, siblings);
+    } else {
+      roots.unshift(keptNode);
+    }
+  }
+
+  return roots;
 }
 
 function scrollTreeNodeIntoView(nodeId) {
@@ -366,10 +406,15 @@ function focusTreeNode(nodeId, options = {}) {
 }
 
 function flattenTreeRows(nodes, branchDepth = 0, rows = []) {
-  for (const node of nodes ?? []) {
-    rows.push({ node, branchDepth });
-    const nextDepth = branchDepth + ((node.children?.length ?? 0) > 1 ? 1 : 0);
-    flattenTreeRows(node.children ?? [], nextDepth, rows);
+  const stack = (nodes ?? []).map((node) => ({ node, branchDepth })).reverse();
+  while (stack.length) {
+    const row = stack.pop();
+    rows.push(row);
+    const children = row.node.children ?? [];
+    const nextDepth = row.branchDepth + (children.length > 1 ? 1 : 0);
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push({ node: children[index], branchDepth: nextDepth });
+    }
   }
   return rows;
 }

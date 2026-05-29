@@ -65,6 +65,7 @@ const PREVIEW_TAIL = 24;
 const MAX_PATH_MENTIONS = 8;
 const MAX_SESSION_SEARCH_MATCHES = 16;
 const MATCH_CONTEXT_RADIUS = 1;
+const MAX_NESTED_TREE_NODES = 2000;
 const PATH_REGEX = /(?:~\/[^\s"'`()\[\]{}<>]+|\/[^\s"'`()\[\]{}<>]+|\.\/[^\s"'`()\[\]{}<>]+)/g;
 const SPACED_PATH_REGEX = /(?:\/Users\/[^\n`]+|~\/[^\n`]+|\.\/[^\n`]+)/g;
 const BACKTICK_REGEX = /`([^`]+)`/g;
@@ -630,15 +631,27 @@ function buildVisibleTree(params: {
   }
 
   const orderById = new Map(visibleNodes.map((node) => [node.id, node.order]));
-  const attachChildren = (treeNode: SessionTreeNode) => {
-    const children = childrenByParent.get(treeNode.id) ?? [];
-    children.sort((a, b) => (orderById.get(a.id) ?? 0) - (orderById.get(b.id) ?? 0));
-    treeNode.children = children;
-    for (const child of children) attachChildren(child);
-  };
+  const sortByOriginalOrder = (a: SessionTreeNode, b: SessionTreeNode) => (orderById.get(a.id) ?? 0) - (orderById.get(b.id) ?? 0);
+  const hasVisibleBranch = Array.from(childrenByParent.values()).some((children) => children.length > 1);
+  if (!hasVisibleBranch || visibleNodes.length > MAX_NESTED_TREE_NODES) {
+    return [...visibleNodes]
+      .sort((a, b) => a.order - b.order)
+      .map((node) => nodeMap.get(node.id)!)
+      .filter(Boolean);
+  }
 
-  roots.sort((a, b) => (orderById.get(a.id) ?? 0) - (orderById.get(b.id) ?? 0));
-  for (const root of roots) attachChildren(root);
+  roots.sort(sortByOriginalOrder);
+  const stack = [...roots].reverse();
+  while (stack.length) {
+    const treeNode = stack.pop()!;
+    const children = childrenByParent.get(treeNode.id) ?? [];
+    children.sort(sortByOriginalOrder);
+    treeNode.children = children;
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push(children[index]);
+    }
+  }
+
   return roots;
 }
 
