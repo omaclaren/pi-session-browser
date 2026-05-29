@@ -212,10 +212,11 @@ function setHashForSession(sessionFile) {
   window.history.replaceState({}, "", url);
 }
 
-function buildTranscriptUrl(sessionFile) {
+function buildTranscriptUrl(sessionFile, entryNumber) {
   const url = new URL("/transcript", window.location.origin);
   url.searchParams.set("path", sessionFile);
   if (state.query) url.searchParams.set("q", state.query);
+  if (entryNumber) url.hash = `entry-${entryNumber}`;
   return url.toString();
 }
 
@@ -433,7 +434,10 @@ function renderSearchMatches(session) {
           <details class="search-match" ${index < 4 ? "open" : ""}>
             <summary>
               <span>Match ${index + 1}: ${escapeHtml(match.role)}</span>
-              ${match.timestamp ? `<time>${escapeHtml(formatDate(match.timestamp))}</time>` : ""}
+              <span class="match-summary-actions">
+                ${match.timestamp ? `<time>${escapeHtml(formatDate(match.timestamp))}</time>` : ""}
+                <button class="mini-button" data-open-transcript-entry="${match.entryIndex + 1}">Open there</button>
+              </span>
             </summary>
             <div class="search-context-list">
               ${match.context.map((entry) => `
@@ -1011,6 +1015,15 @@ function renderDetail(session) {
 
   openTranscriptButton.addEventListener("click", () => {
     window.open(buildTranscriptUrl(session.sessionFile), "_blank", "noopener");
+  });
+
+  els.detail.querySelectorAll("[data-open-transcript-entry]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const entryNumber = Number.parseInt(button.dataset.openTranscriptEntry || "", 10);
+      window.open(buildTranscriptUrl(session.sessionFile, Number.isFinite(entryNumber) ? entryNumber : undefined), "_blank", "noopener");
+    });
   });
 
   copyNoteButton.addEventListener("click", () => {

@@ -816,6 +816,14 @@ mark {
   font-weight: 500;
 }
 
+.match-summary-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .search-context-list {
   padding: 0 0.9rem 0.9rem;
 }

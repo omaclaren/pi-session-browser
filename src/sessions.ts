@@ -1190,6 +1190,15 @@ export class SessionIndex {
         continue;
       }
 
+      if (entry.type === "custom_message" && typeof entry.content === "string") {
+        matchEntries.push({
+          role: entry.customType ? `custom:${entry.customType}` : "custom",
+          timestamp: entry.timestamp,
+          text: entry.content,
+        });
+        continue;
+      }
+
       if ((entry.type === "branch_summary" || entry.type === "compaction") && typeof entry.summary === "string") {
         const role = entry.type === "branch_summary" ? "branch summary" : "compaction summary";
         matchEntries.push({ role, timestamp: entry.timestamp, text: entry.summary });
