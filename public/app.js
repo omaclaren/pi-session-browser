@@ -547,6 +547,24 @@ async function loadProjects() {
   renderProjects();
 }
 
+function getSelectedProjectLabel() {
+  if (!state.selectedProject) return "";
+  return state.projects.find((project) => project.projectId === state.selectedProject)?.projectLabel || "selected project";
+}
+
+function renderSessionCount() {
+  const selectedProjectLabel = getSelectedProjectLabel();
+  if (state.query && selectedProjectLabel) {
+    els.sessionCount.textContent = `${state.sessions.length} matches in ${selectedProjectLabel}`;
+    return;
+  }
+  if (state.query) {
+    els.sessionCount.textContent = `${state.sessions.length} matches`;
+    return;
+  }
+  els.sessionCount.textContent = `${state.sessions.length} shown`;
+}
+
 async function loadSessions() {
   const params = new URLSearchParams();
   if (state.selectedProject) params.set("project", state.selectedProject);
@@ -555,7 +573,7 @@ async function loadSessions() {
   const data = await fetchJson(`/api/sessions?${params.toString()}`);
   state.sessions = data.sessions;
 
-  els.sessionCount.textContent = `${state.sessions.length} shown`;
+  renderSessionCount();
   renderSessions();
 
   const fromHash = getHashSession();
@@ -1036,7 +1054,12 @@ let debounceHandle;
 els.search.addEventListener("input", () => {
   clearTimeout(debounceHandle);
   debounceHandle = setTimeout(async () => {
-    state.query = els.search.value.trim();
+    const previousQuery = state.query;
+    const nextQuery = els.search.value.trim();
+    state.query = nextQuery;
+    if (!previousQuery && nextQuery) {
+      state.selectedProject = null;
+    }
     await Promise.all([loadProjects(), loadSessions()]);
   }, 150);
 });
