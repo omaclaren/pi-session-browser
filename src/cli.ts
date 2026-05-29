@@ -218,7 +218,7 @@ async function main(): Promise<void> {
   const configCwd = process.cwd();
   const projectSettingsPath = getProjectSettingsPath(configCwd);
   const { port, sessionsDir, indexDbPath, notesDir } = await loadAppConfig(configCwd);
-  const autoOpen = hasFlag("--open");
+  const autoOpen = !hasFlag("--headless") && !hasFlag("--no-open");
   const appUrl = `http://127.0.0.1:${port}`;
   let currentNotesDir = notesDir;
 
@@ -415,7 +415,7 @@ async function main(): Promise<void> {
   }
 
   process.stdout.write(`\npi-session-browser running at ${appUrl}\n`);
-  process.stdout.write("Use --open to launch a browser automatically.\n");
+  process.stdout.write("Use --headless or --no-open to skip launching a browser.\n");
 
   if (autoOpen) openBrowser(appUrl);
 

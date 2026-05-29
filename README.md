@@ -28,10 +28,10 @@ Pi stores every conversation as a JSONL session file. Over time you end up with 
 git clone https://github.com/omaclaren/pi-session-browser.git
 cd pi-session-browser
 npm install
-npm start -- --open
+npm start
 ```
 
-Or without `--open`, visit:
+The browser opens automatically at:
 
 ```
 http://127.0.0.1:4314
@@ -40,7 +40,8 @@ http://127.0.0.1:4314
 ### Flags
 
 ```bash
-npm start -- --open                                  # open browser on launch
+npm start -- --headless                              # do not open browser on launch
+npm start -- --no-open                               # alias for --headless
 npm start -- --port 4315                             # custom port
 npm start -- --sessions-dir "/path/to/sessions"      # custom sessions directory
 npm start -- --index-db "/path/to/index.sqlite"      # custom index location
@@ -90,7 +91,7 @@ You can also change the notes folder from the browser UI at runtime.
 
 ```bash
 npm run typecheck
-npm start -- --open
+npm start
 ```
 
 ## License
