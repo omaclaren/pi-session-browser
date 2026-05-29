@@ -430,9 +430,10 @@ async function main(): Promise<void> {
     if (pathname === "/api/sessions") {
       const projectId = searchParams.get("project") ?? undefined;
       const query = searchParams.get("q") ?? undefined;
+      const sort = searchParams.get("sort") ?? undefined;
       const limit = Number.parseInt(searchParams.get("limit") ?? "200", 10);
       json(res, 200, {
-        sessions: index.getSessions({ projectId, query, limit: Number.isFinite(limit) ? limit : 200 }).map(omitSearchText),
+        sessions: index.getSessions({ projectId, query, sort, limit: Number.isFinite(limit) ? limit : 200 }).map(omitSearchText),
       });
       return;
     }

@@ -51,6 +51,8 @@ type RawVisibleNode = {
   order: number;
 };
 
+type SessionSortMode = "smart" | "best" | "newest" | "oldest" | "entries";
+
 const HOME = homedir();
 const DEFAULT_SESSIONS_DIR = join(HOME, ".pi", "agent", "sessions");
 const DEFAULT_INDEX_DB = join(HOME, ".cache", "pi-session-browser", "sessions.sqlite");
@@ -395,6 +397,38 @@ function matchesStructuredFilters(summary: SessionSummary, parsedQuery: ParsedQu
   }
 
   return true;
+}
+
+function sortSessionResults(results: SessionSearchResult[], sort: SessionSortMode, hasQuery: boolean): SessionSearchResult[] {
+  const effectiveSort = sort === "smart" ? (hasQuery ? "best" : "newest") : sort;
+  const sorted = [...results];
+
+  sorted.sort((a, b) => {
+    if (effectiveSort === "best") {
+      const scoreA = a.score ?? 0;
+      const scoreB = b.score ?? 0;
+      if (scoreA !== scoreB) return scoreB - scoreA;
+      return b.updatedAt.localeCompare(a.updatedAt);
+    }
+
+    if (effectiveSort === "oldest") {
+      return a.updatedAt === b.updatedAt ? a.projectLabel.localeCompare(b.projectLabel) : a.updatedAt.localeCompare(b.updatedAt);
+    }
+
+    if (effectiveSort === "entries") {
+      if (a.totalEntries !== b.totalEntries) return b.totalEntries - a.totalEntries;
+      return b.updatedAt.localeCompare(a.updatedAt);
+    }
+
+    return b.updatedAt === a.updatedAt ? a.projectLabel.localeCompare(b.projectLabel) : b.updatedAt.localeCompare(a.updatedAt);
+  });
+
+  return sorted;
+}
+
+function parseSortMode(value: string | undefined): SessionSortMode {
+  if (value === "best" || value === "newest" || value === "oldest" || value === "entries") return value;
+  return "smart";
 }
 
 function matchSummary(summary: SessionSummary, parsedQuery: ParsedQuery): { score: number; matchSnippet?: string } | undefined {
@@ -957,8 +991,10 @@ export class SessionIndex {
     this.lastIndexedAt = new Date().toISOString();
   }
 
-  private collectSessionResults(options?: { projectId?: string; query?: string; limit?: number }): SessionSearchResult[] {
+  private collectSessionResults(options?: { projectId?: string; query?: string; limit?: number; sort?: string }): SessionSearchResult[] {
     const parsedQuery = parseQuery(options?.query);
+    const hasQuery = Boolean(parsedQuery.raw || parsedQuery.labelTerms.length || parsedQuery.projectTerms.length);
+    const sort = parseSortMode(options?.sort);
     let sessions = Array.from(this.entries.values()).map((entry) => entry.summary);
 
     if (options?.projectId) {
@@ -967,7 +1003,7 @@ export class SessionIndex {
 
     let results: SessionSearchResult[] = sessions.map((summary) => ({ ...summary }));
 
-    if (parsedQuery.raw || parsedQuery.labelTerms.length || parsedQuery.projectTerms.length) {
+    if (hasQuery) {
       const baseLimit = options?.limit ?? this.entries.size ?? 1;
       const searchLimit = Math.max(baseLimit * 4, 200);
       const dbHits = this.searchDb.search(parsedQuery.freeTerms, searchLimit);
@@ -988,18 +1024,9 @@ export class SessionIndex {
         });
       }
       results = matchedResults;
-
-      results.sort((a, b) => {
-        const scoreA = a.score ?? 0;
-        const scoreB = b.score ?? 0;
-        if (scoreA !== scoreB) return scoreB - scoreA;
-        return b.updatedAt.localeCompare(a.updatedAt);
-      });
-    } else {
-      results.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     }
 
-    return results;
+    return sortSessionResults(results, sort, hasQuery);
   }
 
   getProjects(options?: { query?: string }): SessionProject[] {
@@ -1059,7 +1086,7 @@ export class SessionIndex {
       });
   }
 
-  getSessions(options?: { projectId?: string; query?: string; limit?: number }): SessionSearchResult[] {
+  getSessions(options?: { projectId?: string; query?: string; limit?: number; sort?: string }): SessionSearchResult[] {
     return this.collectSessionResults(options).slice(0, options?.limit ?? 200);
   }
 

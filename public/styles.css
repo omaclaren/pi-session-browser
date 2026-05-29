@@ -82,12 +82,14 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
 button,
-input[type="search"] {
+input[type="search"],
+select {
   transition:
     background-color 180ms ease,
     border-color 180ms ease,
@@ -143,12 +145,21 @@ input[type="search"] {
   box-shadow: none;
 }
 
+select {
+  padding: 0.36rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+}
+
 input[type="search"]::placeholder {
   color: var(--muted);
 }
 
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
 .list-item:focus-visible,
 [data-tree-node]:focus-visible {
   outline: none;
@@ -328,6 +339,20 @@ input:focus-visible,
 
 .panel-header .small {
   flex-shrink: 0;
+}
+
+.panel-header-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.sort-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 
 .selection-toolbar {

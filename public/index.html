@@ -29,9 +29,21 @@
       </aside>
 
       <section class="panel sessions-panel">
-        <div class="panel-header">
+        <div class="panel-header sessions-header">
           <h2>Sessions</h2>
-          <span id="session-count" class="muted small"></span>
+          <div class="panel-header-controls">
+            <label class="sort-control small muted" for="session-sort">
+              Sort
+              <select id="session-sort" aria-label="Sort sessions">
+                <option value="smart">Smart</option>
+                <option value="best">Best match</option>
+                <option value="newest">Newest</option>
+                <option value="oldest">Oldest</option>
+                <option value="entries">Most entries</option>
+              </select>
+            </label>
+            <span id="session-count" class="muted small"></span>
+          </div>
         </div>
         <div id="session-selection-bar" class="selection-toolbar"></div>
         <div id="sessions" class="list sessions"></div>

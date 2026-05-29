@@ -6,6 +6,7 @@ const state = {
   selectedSessionDetail: null,
   selectedSessionFiles: new Set(),
   query: "",
+  sessionSort: "smart",
   notesDir: "",
   configInfo: null,
   conversationMode: "timeline",
@@ -20,6 +21,7 @@ const els = {
   stats: document.querySelector("#stats"),
   projects: document.querySelector("#projects"),
   sessions: document.querySelector("#sessions"),
+  sessionSort: document.querySelector("#session-sort"),
   sessionCount: document.querySelector("#session-count"),
   sessionSelectionBar: document.querySelector("#session-selection-bar"),
   detail: document.querySelector("#detail"),
@@ -576,6 +578,7 @@ async function loadSessions() {
   const params = new URLSearchParams();
   if (state.selectedProject) params.set("project", state.selectedProject);
   if (state.query) params.set("q", state.query);
+  if (state.sessionSort) params.set("sort", state.sessionSort);
   params.set("limit", "250");
   const data = await fetchJson(`/api/sessions?${params.toString()}`);
   state.sessions = data.sessions;
@@ -1075,6 +1078,11 @@ els.search.addEventListener("input", () => {
     }
     await Promise.all([loadProjects(), loadSessions()]);
   }, 150);
+});
+
+els.sessionSort.addEventListener("change", async () => {
+  state.sessionSort = els.sessionSort.value || "smart";
+  await loadSessions();
 });
 
 els.changeNotesDir.addEventListener("click", async () => {
