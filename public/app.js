@@ -1,3 +1,24 @@
+const ENTRY_FILTER_LABELS = {
+  user: "User",
+  assistant: "Assistant",
+  tool: "Tool output",
+  summary: "Summaries",
+  other: "Other",
+};
+
+function loadEntryFilters() {
+  const defaults = { user: true, assistant: true, tool: true, summary: true, other: true };
+  try {
+    const stored = JSON.parse(localStorage.getItem("psb-entry-filters") || "{}");
+    for (const key of Object.keys(defaults)) {
+      if (typeof stored[key] === "boolean") defaults[key] = stored[key];
+    }
+  } catch {
+    // ignore malformed stored filters
+  }
+  return defaults;
+}
+
 const state = {
   projects: [],
   sessions: [],
@@ -12,7 +33,25 @@ const state = {
   conversationMode: "timeline",
   treeMode: "all",
   focusedTreeNodeId: null,
+  entryFilters: loadEntryFilters(),
 };
+
+function categoryForRole(role = "") {
+  const normalized = String(role).toLowerCase();
+  if (normalized === "user") return "user";
+  if (normalized === "assistant") return "assistant";
+  if (normalized.includes("tool")) return "tool";
+  if (normalized.includes("summary") || normalized.includes("compaction")) return "summary";
+  return "other";
+}
+
+function saveEntryFilters() {
+  try {
+    localStorage.setItem("psb-entry-filters", JSON.stringify(state.entryFilters));
+  } catch {
+    // localStorage unavailable; filters stay session-only
+  }
+}
 
 const els = {
   search: document.querySelector("#search"),
@@ -72,6 +111,12 @@ function highlightText(text = "", terms = getSearchTerms()) {
 
 function normalizeWhitespace(text = "") {
   return String(text).replace(/\s+/g, " ").trim();
+}
+
+// Long machine-y titles (snake_case, paths) have no natural break points;
+// add invisible ones after separators so they wrap there instead of mid-word.
+function breakableTitleHtml(title = "") {
+  return escapeHtml(title).replace(/([_\-./])/g, "$1<wbr>");
 }
 
 function truncateText(text = "", maxLength = 120) {
@@ -206,9 +251,16 @@ function formatDate(value) {
   }).format(date);
 }
 
-function setHashForSession(sessionFile) {
+function buildHashParams() {
+  const params = new URLSearchParams();
+  if (state.query) params.set("q", state.query);
+  if (state.selectedSessionFile) params.set("session", state.selectedSessionFile);
+  return params;
+}
+
+function updateHash() {
   const url = new URL(window.location.href);
-  url.hash = `session=${encodeURIComponent(sessionFile)}`;
+  url.hash = buildHashParams().toString();
   window.history.replaceState({}, "", url);
 }
 
@@ -250,10 +302,12 @@ function buildPiTreeTarget(session, match) {
   return lines.filter((line) => line !== undefined).join("\n");
 }
 
+function getHashParams() {
+  return new URLSearchParams(window.location.hash.replace(/^#/, ""));
+}
+
 function getHashSession() {
-  const hash = window.location.hash.replace(/^#/, "");
-  const params = new URLSearchParams(hash);
-  return params.get("session");
+  return getHashParams().get("session");
 }
 
 async function fetchJson(url, options) {
@@ -276,10 +330,6 @@ async function flashButton(button, nextLabel, task) {
       button.textContent = original;
     }, 1200);
   }
-}
-
-function formatTreeStats(session) {
-  return `${session.treeStats.branchPoints} branches · ${session.treeStats.compactions} compactions · ${session.treeStats.branchSummaries} branch summaries`;
 }
 
 function visitTree(nodes, visit) {
@@ -464,14 +514,15 @@ function renderTreeNodes(nodes) {
 }
 
 function renderTimelineEntries(session) {
+  const visibleEntries = session.previewEntries.filter((entry) => state.entryFilters[categoryForRole(entry.role)]);
   return `
     ${session.omittedEntryCount > 0 ? `<p class="muted small">Showing a transcript excerpt: omitted ${session.omittedEntryCount} middle entries from this session.</p>` : ""}
+    ${renderEntryFilterChips(session)}
     <div class="timeline-list">
-      ${session.previewEntries.map((entry) => {
+      ${visibleEntries.map((entry) => {
         const roleClass = String(entry.role || "message").toLowerCase().replace(/[^a-z0-9]+/g, "-");
         return `
           <section class="timeline-entry timeline-${escapeHtml(roleClass)}">
-            <div class="timeline-marker" aria-hidden="true"></div>
             <div class="timeline-card preview-entry">
               <div class="preview-entry-role">${escapeHtml(entry.role)} ${entry.timestamp ? `<time>${escapeHtml(formatDate(entry.timestamp))}</time>` : ""}</div>
               <div>${escapeHtml(entry.text)}</div>
@@ -480,7 +531,26 @@ function renderTimelineEntries(session) {
         `;
       }).join("")}
     </div>
+    ${visibleEntries.length === 0 && session.previewEntries.length > 0 ? `<p class="muted small">All entry types are hidden. Re-enable a type above to see entries.</p>` : ""}
   `;
+}
+
+function renderEntryFilterChips(session) {
+  const counts = new Map();
+  for (const entry of session.previewEntries) {
+    const category = categoryForRole(entry.role);
+    counts.set(category, (counts.get(category) || 0) + 1);
+  }
+  if (counts.size < 2) return "";
+  const chips = Object.keys(ENTRY_FILTER_LABELS)
+    .filter((category) => counts.has(category))
+    .map((category) => `
+      <button class="filter-chip ${state.entryFilters[category] ? "active" : ""}" data-entry-filter="${category}" aria-pressed="${state.entryFilters[category]}">
+        ${ENTRY_FILTER_LABELS[category]} (${counts.get(category)})
+      </button>
+    `)
+    .join("");
+  return `<div class="filter-chip-row" role="group" aria-label="Show or hide entry types">${chips}</div>`;
 }
 
 function renderSearchMatches(session) {
@@ -669,7 +739,7 @@ async function loadSessions() {
 
   const fromHash = getHashSession();
   if (fromHash && !state.selectedSessionFile) {
-    await selectSession(decodeURIComponent(fromHash));
+    await selectSession(fromHash);
     return;
   }
 
@@ -893,7 +963,7 @@ async function selectSession(sessionFile) {
   if (changedSession) {
     state.focusedTreeNodeId = null;
   }
-  setHashForSession(sessionFile);
+  updateHash();
   renderSessions();
   const params = new URLSearchParams({ path: sessionFile });
   if (state.query) params.set("q", state.query);
@@ -938,7 +1008,7 @@ function renderDetail(session) {
     <section class="detail-hero">
       <div class="detail-heading">
         <div class="eyebrow">Session</div>
-        <h2>${escapeHtml(detailTitle)}</h2>
+        <h2>${breakableTitleHtml(detailTitle)}</h2>
         ${detailSubtitleParts.length ? `<p class="detail-subtitle muted">${escapeHtml(detailSubtitleParts.join(" · "))}</p>` : ""}
         ${detailLeadPreview ? `<p class="detail-lead"><span class="detail-lead-label">Task</span>${escapeHtml(detailLeadPreview)}</p>` : ""}
       </div>
@@ -958,67 +1028,8 @@ function renderDetail(session) {
       <span class="summary-pill">${session.totalEntries} total entries</span>
       <span class="summary-pill">${session.treeStats.branchPoints} branches</span>
       <span class="summary-pill">${session.treeStats.compactions} compactions</span>
-      ${session.labels.length ? `<span class="summary-pill">${session.labels.length} labels</span>` : ""}
+      ${session.labels.map((label) => `<span class="tag">${escapeHtml(label)}</span>`).join("")}
     </div>
-
-    <div class="detail-grid">
-      <div class="metric">
-        <div class="metric-label">Session file</div>
-        <div class="code-block">${escapeHtml(session.sessionFile)}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Project cwd</div>
-        <div class="code-block">${escapeHtml(session.cwd)}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">First prompt</div>
-        <div>${escapeHtml(session.firstUserPrompt || "")}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Latest user prompt</div>
-        <div>${escapeHtml(session.latestUserPrompt || "")}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Message counts</div>
-        <div>${session.userMessageCount} user · ${session.assistantMessageCount} assistant · ${session.totalEntries} total entries</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Structure stats</div>
-        <div>${escapeHtml(formatTreeStats(session))}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Note target</div>
-        <div class="code-block">${escapeHtml(state.notesDir ? `${state.notesDir}/${session.noteFileName}` : session.noteFileName)}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Resume command</div>
-        <div class="code-block">${escapeHtml(session.resumeCommand)}</div>
-      </div>
-    </div>
-
-    ${session.labels.length ? `
-      <section class="detail-section">
-        <h3>Labels</h3>
-        <div class="tag-row">${session.labels.map((label) => `<span class="tag">${escapeHtml(label)}</span>`).join("")}</div>
-      </section>
-    ` : ""}
-
-    ${session.recentLabels.length ? `
-      <section class="detail-section">
-        <h3>Recent labeled checkpoints</h3>
-        <div class="preview-list">
-          ${session.recentLabels.map((label) => `
-            <section class="preview-entry compact checkpoint-entry">
-              <div class="checkpoint-main">
-                <div class="preview-entry-role">${escapeHtml(label.label)} ${label.timestamp ? `<time>${escapeHtml(formatDate(label.timestamp))}</time>` : ""}</div>
-                <div>${escapeHtml(label.targetText || "")}</div>
-              </div>
-              ${label.targetId ? `<button class="mini-button" data-jump-node="${escapeHtml(label.targetId)}">Jump to branches</button>` : ""}
-            </section>
-          `).join("")}
-        </div>
-      </section>
-    ` : ""}
 
     ${renderSearchMatches(session)}
 
@@ -1031,7 +1042,7 @@ function renderDetail(session) {
           <button class="segmented-button ${state.conversationMode === "branches" ? "active" : ""}" data-conversation-mode="branches">Branches</button>
         </div>
         <div class="small muted">${state.conversationMode === "timeline"
-          ? `${session.previewEntries.length} excerpt entries shown`
+          ? `${session.previewEntries.filter((entry) => state.entryFilters[categoryForRole(entry.role)]).length}/${session.previewEntries.length} excerpt entries shown`
           : `${visibleTreeNodes}/${totalTreeNodes} structure nodes shown`}</div>
       </div>
       ${state.conversationMode === "timeline" ? `
@@ -1059,6 +1070,23 @@ function renderDetail(session) {
       `}
     </section>
 
+    ${session.recentLabels.length ? `
+      <section class="detail-section">
+        <h3>Recent labeled checkpoints</h3>
+        <div class="preview-list">
+          ${session.recentLabels.map((label) => `
+            <section class="preview-entry compact checkpoint-entry">
+              <div class="checkpoint-main">
+                <div class="preview-entry-role">${escapeHtml(label.label)} ${label.timestamp ? `<time>${escapeHtml(formatDate(label.timestamp))}</time>` : ""}</div>
+                <div>${escapeHtml(label.targetText || "")}</div>
+              </div>
+              ${label.targetId ? `<button class="mini-button" data-jump-node="${escapeHtml(label.targetId)}">Jump to branches</button>` : ""}
+            </section>
+          `).join("")}
+        </div>
+      </section>
+    ` : ""}
+
     ${session.pathMentions.length ? `
       <section class="detail-section">
         <h3>Key path mentions</h3>
@@ -1073,6 +1101,36 @@ function renderDetail(session) {
       </section>
     ` : ""}
 
+    <details class="detail-section detail-meta">
+      <summary>Details &amp; paths</summary>
+      <div class="meta-rows">
+        <div class="meta-row">
+          <div class="meta-label">Session file</div>
+          <div class="meta-value mono">${escapeHtml(session.sessionFile)}</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Project cwd</div>
+          <div class="meta-value mono">${escapeHtml(session.cwd)}</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">First prompt</div>
+          <div class="meta-value">${escapeHtml(session.firstUserPrompt || "")}</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Latest user prompt</div>
+          <div class="meta-value">${escapeHtml(session.latestUserPrompt || "")}</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Note target</div>
+          <div class="meta-value mono">${escapeHtml(state.notesDir ? `${state.notesDir}/${session.noteFileName}` : session.noteFileName)}</div>
+        </div>
+        <div class="meta-row">
+          <div class="meta-label">Resume command</div>
+          <div class="meta-value mono">${escapeHtml(session.resumeCommand)}</div>
+        </div>
+      </div>
+    </details>
+
   `;
 
   const copyLinkButton = els.detail.querySelector("#copy-link");
@@ -1083,7 +1141,7 @@ function renderDetail(session) {
   const clearFocusButton = els.detail.querySelector("#clear-tree-focus");
 
   copyLinkButton.addEventListener("click", () => {
-    copyText(`${window.location.origin}${session.deepLinkPath}`, copyLinkButton, "Link copied");
+    copyText(`${window.location.origin}/#${buildHashParams().toString()}`, copyLinkButton, "Link copied");
   });
 
   copyResumeButton.addEventListener("click", () => {
@@ -1179,6 +1237,15 @@ function renderDetail(session) {
     });
   });
 
+  els.detail.querySelectorAll("[data-entry-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const category = button.dataset.entryFilter;
+      state.entryFilters[category] = !state.entryFilters[category];
+      saveEntryFilters();
+      renderDetail(session);
+    });
+  });
+
   els.detail.querySelectorAll("[data-tree-node]").forEach((element) => {
     element.addEventListener("click", () => {
       focusTreeNode(element.dataset.treeNode, { scroll: false });
@@ -1196,6 +1263,7 @@ els.search.addEventListener("input", () => {
     if (!previousQuery && nextQuery) {
       state.selectedProject = null;
     }
+    updateHash();
     await Promise.all([loadProjects(), loadSessions()]);
   }, 150);
 });
@@ -1229,14 +1297,85 @@ els.refresh.addEventListener("click", async () => {
   });
 });
 
+async function moveSessionSelection(offset) {
+  if (!state.sessions.length) return;
+  const currentIndex = state.sessions.findIndex((session) => session.sessionFile === state.selectedSessionFile);
+  const nextIndex = currentIndex === -1
+    ? (offset > 0 ? 0 : state.sessions.length - 1)
+    : Math.min(state.sessions.length - 1, Math.max(0, currentIndex + offset));
+  const next = state.sessions[nextIndex];
+  if (!next || next.sessionFile === state.selectedSessionFile) return;
+  await selectSession(next.sessionFile);
+  els.sessions.querySelector(".session-item.active")?.scrollIntoView({ block: "nearest" });
+}
+
+window.addEventListener("keydown", (event) => {
+  const target = event.target;
+  const typing = target instanceof HTMLElement
+    && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
+
+  if (typing) {
+    if (target !== els.search) return;
+    if (event.key === "Escape") {
+      if (els.search.value) {
+        els.search.value = "";
+        els.search.dispatchEvent(new Event("input"));
+      }
+      els.search.blur();
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "Enter") {
+      event.preventDefault();
+      els.search.blur();
+      if (event.key === "ArrowDown") moveSessionSelection(1);
+    }
+    return;
+  }
+
+  if (event.metaKey || event.ctrlKey || event.altKey || els.notesDirDialog.open) return;
+
+  if (event.key === "/") {
+    event.preventDefault();
+    els.search.focus();
+    els.search.select();
+    return;
+  }
+  if (event.key === "j" || event.key === "ArrowDown") {
+    event.preventDefault();
+    moveSessionSelection(1);
+    return;
+  }
+  if (event.key === "k" || event.key === "ArrowUp") {
+    event.preventDefault();
+    moveSessionSelection(-1);
+    return;
+  }
+  if (event.key === "Enter" && state.selectedSessionDetail) {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active.closest("button, a, summary, [role=button]")) return;
+    window.open(buildTranscriptUrl(state.selectedSessionDetail.sessionFile), "_blank", "noopener");
+  }
+});
+
 window.addEventListener("hashchange", async () => {
-  const fromHash = getHashSession();
-  if (!fromHash) return;
-  const sessionFile = decodeURIComponent(fromHash);
-  if (sessionFile !== state.selectedSessionFile) {
+  const params = getHashParams();
+  const queryFromHash = (params.get("q") || "").trim();
+  if (queryFromHash !== state.query) {
+    state.query = queryFromHash;
+    els.search.value = queryFromHash;
+    await Promise.all([loadProjects(), loadSessions()]);
+  }
+  const sessionFile = params.get("session");
+  if (sessionFile && sessionFile !== state.selectedSessionFile) {
     await selectSession(sessionFile);
   }
 });
+
+const initialQuery = (getHashParams().get("q") || "").trim();
+if (initialQuery) {
+  state.query = initialQuery;
+  els.search.value = initialQuery;
+}
 
 await Promise.all([loadTheme(), loadStats(), loadConfig(), loadProjects()]);
 await loadSessions();
