@@ -1,5 +1,6 @@
+#!/usr/bin/env node
 import { execFile } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { promises as fs, watch, type FSWatcher } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { dirname, extname, isAbsolute, join, resolve } from "node:path";
@@ -176,6 +177,23 @@ function highlightHtml(textValue: string, terms: string[]): string {
   }).join("");
 }
 
+const ENTRY_FILTER_LABELS: Record<string, string> = {
+  user: "User",
+  assistant: "Assistant",
+  tool: "Tool output",
+  summary: "Summaries",
+  other: "Other",
+};
+
+function categoryForRole(role: string): string {
+  const normalized = role.toLowerCase();
+  if (normalized === "user") return "user";
+  if (normalized === "assistant") return "assistant";
+  if (normalized.includes("tool")) return "tool";
+  if (normalized.includes("summary") || normalized.includes("compaction")) return "summary";
+  return "other";
+}
+
 function renderTranscriptPage(transcript: Awaited<ReturnType<SessionIndex["getTranscript"]>>, query: string | undefined): string {
   if (!transcript) return "";
   const terms = queryTerms(query);
@@ -183,11 +201,20 @@ function renderTranscriptPage(transcript: Awaited<ReturnType<SessionIndex["getTr
     ?? transcript.summary.firstUserPrompt
     ?? transcript.summary.projectLabel
     ?? "Session transcript";
+  const categoryCounts = new Map<string, number>();
+  for (const entry of transcript.entries) {
+    const category = categoryForRole(entry.role);
+    categoryCounts.set(category, (categoryCounts.get(category) ?? 0) + 1);
+  }
+  const filterChips = categoryCounts.size < 2 ? "" : Object.keys(ENTRY_FILTER_LABELS)
+    .filter((category) => categoryCounts.has(category))
+    .map((category) => `<button class="filter-chip" data-filter-chip="${category}" aria-pressed="true">${ENTRY_FILTER_LABELS[category]} (${categoryCounts.get(category)})</button>`)
+    .join("");
   const entries = transcript.entries.map((entry, index) => {
     const roleClass = entry.role.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     const entryIdAnchor = entry.entryId ? `pi-entry-${entry.entryId}` : undefined;
     return `
-      <article class="entry role-${escapeHtml(roleClass)}" id="entry-${index + 1}" ${entry.entryId ? `data-entry-id="${escapeHtml(entry.entryId)}"` : ""}>
+      <article class="entry role-${escapeHtml(roleClass)}" data-category="${escapeHtml(categoryForRole(entry.role))}" id="entry-${index + 1}" ${entry.entryId ? `data-entry-id="${escapeHtml(entry.entryId)}"` : ""}>
         ${entryIdAnchor ? `<a class="entry-id-anchor" id="${escapeHtml(entryIdAnchor)}" aria-hidden="true"></a>` : ""}
         <div class="entry-meta">
           <a href="#entry-${index + 1}">#${index + 1}</a>
@@ -210,10 +237,10 @@ function renderTranscriptPage(transcript: Awaited<ReturnType<SessionIndex["getTr
     :root { color-scheme: light dark; --bg: #ffffff; --panel: #f6f8fa; --surface: #ffffff; --border: #d0d7de; --text: #0e1116; --muted: #656e77; --accent: #1b7c83; --highlight: rgba(241,187,121,0.24); }
     @media (prefers-color-scheme: dark) { :root { --bg: #181818; --panel: #1f1f1f; --surface: #1a1a1a; --border: #363636; --text: #d5d0c9; --muted: #88847f; --accent: #42d9c5; --highlight: rgba(241,187,121,0.20); } }
     * { box-sizing: border-box; }
-    html { font-size: 90%; }
+    html { font-size: 80%; }
     body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; background: var(--bg); color: var(--text); }
     header { position: sticky; top: 0; z-index: 2; padding: 1rem 1.2rem; border-bottom: 1px solid var(--border); background: var(--bg); }
-    h1 { margin: 0; font-size: clamp(1.25rem, 2vw, 1.7rem); line-height: 1.15; letter-spacing: -0.03em; }
+    h1 { margin: 0; font-size: clamp(1.25rem, 2vw, 1.7rem); line-height: 1.15; letter-spacing: -0.03em; overflow-wrap: break-word; }
     .meta { margin-top: 0.45rem; color: var(--muted); font-size: 0.9rem; display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; }
     main { width: min(110rem, 100%); margin: 0 auto; padding: 1rem; display: grid; gap: 0.75rem; }
     .entry { position: relative; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); overflow: hidden; }
@@ -225,19 +252,60 @@ function renderTranscriptPage(transcript: Awaited<ReturnType<SessionIndex["getTr
     .role-user { border-color: color-mix(in srgb, var(--accent), var(--border) 55%); }
     .role-toolresult, .role-tool-result, .role-compaction-summary, .role-branch-summary { background: var(--panel); }
     mark { padding: 0 0.08em; border-radius: 0.22em; background: var(--highlight); color: var(--text); box-shadow: inset 0 -0.12em 0 #f1bb79; }
+    .filters { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.6rem; }
+    .filter-chip { border: 1px solid var(--border); border-radius: 999px; padding: 0.22rem 0.65rem; font-size: 0.78rem; color: var(--muted); background: transparent; cursor: pointer; font-family: inherit; }
+    .filter-chip.active { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+    .filter-chip:not(.active) { text-decoration: line-through; opacity: 0.7; }
+    body.hide-user [data-category="user"],
+    body.hide-assistant [data-category="assistant"],
+    body.hide-tool [data-category="tool"],
+    body.hide-summary [data-category="summary"],
+    body.hide-other [data-category="other"] { display: none; }
   </style>
 </head>
 <body>
   <header>
-    <h1>${escapeHtml(title)}</h1>
+    <h1>${escapeHtml(title).replace(/([_\-./])/g, "$1<wbr>")}</h1>
     <div class="meta">
       <span>${transcript.entries.length} transcript entries</span>
       <span>${escapeHtml(transcript.summary.projectLabel)}</span>
       <span>${escapeHtml(transcript.summary.updatedAt)}</span>
       ${terms.length ? `<span>highlighting: ${terms.map(escapeHtml).join(", ")}</span>` : ""}
     </div>
+    ${filterChips ? `<div class="filters" role="group" aria-label="Show or hide entry types">${filterChips}</div>` : ""}
   </header>
   <main>${entries || `<p>No transcript entries found.</p>`}</main>
+  <script>
+    (() => {
+      const FILTER_KEY = "psb-entry-filters";
+      const filters = { user: true, assistant: true, tool: true, summary: true, other: true };
+      try {
+        const stored = JSON.parse(localStorage.getItem(FILTER_KEY) || "{}");
+        for (const key of Object.keys(filters)) {
+          if (typeof stored[key] === "boolean") filters[key] = stored[key];
+        }
+      } catch {}
+      const apply = () => {
+        for (const [category, shown] of Object.entries(filters)) {
+          document.body.classList.toggle("hide-" + category, !shown);
+        }
+        document.querySelectorAll("[data-filter-chip]").forEach((chip) => {
+          const category = chip.dataset.filterChip;
+          chip.classList.toggle("active", filters[category]);
+          chip.setAttribute("aria-pressed", String(filters[category]));
+        });
+      };
+      document.querySelectorAll("[data-filter-chip]").forEach((chip) => {
+        chip.addEventListener("click", () => {
+          const category = chip.dataset.filterChip;
+          filters[category] = !filters[category];
+          try { localStorage.setItem(FILTER_KEY, JSON.stringify(filters)); } catch {}
+          apply();
+        });
+      });
+      apply();
+    })();
+  </script>
 </body>
 </html>`;
 }
@@ -340,16 +408,40 @@ async function main(): Promise<void> {
   const index = new SessionIndex(sessionsDir, indexDbPath);
 
   process.stdout.write(`Indexing sessions from ${index.sessionsDir}...\n`);
-  await index.refresh();
-  process.stdout.write(`Indexed ${index.getStats().sessions} sessions across ${index.getStats().projects} projects.\n`);
+  const initialStats = await index.refresh();
+  const stats = index.getStats();
+  const cacheNote = initialStats.fromCache > 0
+    ? ` (${initialStats.fromCache} from cache, ${initialStats.parsed} re-parsed)`
+    : "";
+  process.stdout.write(`Indexed ${stats.sessions} sessions across ${stats.projects} projects${cacheNote}.\n`);
   process.stdout.write(`Search index database: ${index.indexDbPath}\n`);
   process.stdout.write(`Session notes will be written to ${currentNotesDir}\n`);
 
-  setInterval(() => {
+  const backgroundRefresh = () => {
     index.refresh().catch((error) => {
       console.error("Background refresh failed", error);
     });
-  }, 60_000).unref();
+  };
+
+  let watcher: FSWatcher | undefined;
+  let watchDebounce: NodeJS.Timeout | undefined;
+  try {
+    watcher = watch(index.sessionsDir, { recursive: true }, () => {
+      clearTimeout(watchDebounce);
+      watchDebounce = setTimeout(backgroundRefresh, 500);
+      watchDebounce.unref();
+    });
+    watcher.unref();
+    watcher.on("error", (error) => {
+      console.error("Session watcher failed; falling back to interval refresh", error);
+      watcher = undefined;
+    });
+    process.stdout.write("Watching sessions directory for changes.\n");
+  } catch (error) {
+    console.error("Could not watch sessions directory; using interval refresh only", error);
+  }
+
+  setInterval(backgroundRefresh, 60_000).unref();
 
   const server = createServer(async (req, res) => {
     if (!req.url) {
@@ -361,7 +453,7 @@ async function main(): Promise<void> {
     const { pathname, searchParams } = url;
 
     if (pathname === "/api/health") {
-      json(res, 200, { ok: true, notesDir: currentNotesDir, distillDir: currentNotesDir, ...index.getStats() });
+      json(res, 200, { ok: true, notesDir: currentNotesDir, distillDir: currentNotesDir, watching: Boolean(watcher), ...index.getStats() });
       return;
     }
 
@@ -568,6 +660,8 @@ async function main(): Promise<void> {
   if (autoOpen) openBrowser(appUrl);
 
   const shutdown = () => {
+    watcher?.close();
+    clearTimeout(watchDebounce);
     index.close();
     server.close(() => process.exit(0));
   };
