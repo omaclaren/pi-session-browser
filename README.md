@@ -9,10 +9,13 @@ Pi stores every conversation as a JSONL session file. Over time you end up with 
 ## Features
 
 - scan `~/.pi/agent/sessions` (or custom path)
+- watch the sessions directory: new and updated sessions are indexed within seconds, no manual reindex
+- persistent summary cache: only changed sessions are re-parsed on startup
 - group sessions by project / cwd
 - live SQLite FTS5-backed full-text search with `label:` and `project:` filters
 - full-text indexing of compaction and branch summaries for better long-session recall
 - conversation view with timeline + branch modes
+- show/hide entry types (user, assistant, tool output, summaries) in both the conversation excerpt and the full transcript, remembered across sessions
 - tree-aware stats: branch points, compactions, branch summaries, labels
 - jump from labeled checkpoints into the branch view
 - copy deep link, resume command, or session note
@@ -20,6 +23,8 @@ Pi stores every conversation as a JSONL session file. Over time you end up with 
 - multi-select sessions across projects and save a deterministic markdown bundle
 - query-aware project list with match counts
 - sort results by smart/default ordering, best match, newest, oldest, or most entries
+- keyboard navigation: `/` focuses search, `j`/`k` or arrow keys move through sessions, `Enter` opens the full transcript, `Esc` clears search
+- shareable URLs: the current search query and selected session live in the URL hash, so links and bookmarks restore both
 - inspect search matches with surrounding transcript context
 - open the full transcript in a scrollable browser tab with pi entry IDs
 - copy an explicit pi `/tree` handoff from any search match
@@ -27,6 +32,14 @@ Pi stores every conversation as a JSONL session file. Over time you end up with 
 - adapts to your active pi theme automatically
 
 ## Run
+
+Via npm:
+
+```bash
+npx pi-session-browser
+```
+
+Or from source:
 
 ```bash
 git clone https://github.com/omaclaren/pi-session-browser.git
@@ -44,13 +57,15 @@ http://127.0.0.1:4314
 ### Flags
 
 ```bash
-npm start -- --headless                              # do not open browser on launch
-npm start -- --no-open                               # alias for --headless
-npm start -- --port 4315                             # custom port
-npm start -- --sessions-dir "/path/to/sessions"      # custom sessions directory
-npm start -- --index-db "/path/to/index.sqlite"      # custom index location
-npm start -- --notes-dir "/path/to/notes"            # custom notes directory
+npx pi-session-browser --headless                              # do not open browser on launch
+npx pi-session-browser --no-open                               # alias for --headless
+npx pi-session-browser --port 4315                             # custom port
+npx pi-session-browser --sessions-dir "/path/to/sessions"      # custom sessions directory
+npx pi-session-browser --index-db "/path/to/index.sqlite"      # custom index location
+npx pi-session-browser --notes-dir "/path/to/notes"            # custom notes directory
 ```
+
+When running from source, pass flags after `--`, e.g. `npm start -- --headless`.
 
 ### Environment variables
 
@@ -95,7 +110,8 @@ You can also change the notes folder from the browser UI at runtime.
 
 ```bash
 npm run typecheck
-npm start
+npm start            # run from TypeScript source via tsx
+npm run build        # compile to dist/ (used by the npm bin entry)
 ```
 
 ## License

@@ -1,9 +1,19 @@
 {
   "name": "pi-session-browser",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local web UI for exploring, searching, and saving notes or bundles from pi sessions",
   "type": "module",
   "license": "MIT",
+  "bin": {
+    "pi-session-browser": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "public"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/omaclaren/pi-session-browser.git"
@@ -18,7 +28,9 @@
   "scripts": {
     "start": "tsx src/cli.ts",
     "dev": "tsx src/cli.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run typecheck && npm run build"
   },
   "dependencies": {
     "better-sqlite3": "^12.4.1"
