@@ -1,7 +1,11 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
-import type { SessionSearchDocument } from "./types.js";
+import type { SessionSearchDocument, SessionSummary } from "./types.js";
+
+// Bump whenever parseSessionSummary output or the FTS schema changes, so stale
+// cached/indexed rows from older versions are rebuilt instead of trusted.
+const CACHE_VERSION = 1;
 
 export type SearchHit = {
   sessionFile: string;
@@ -9,6 +13,12 @@ export type SearchHit = {
   scoreBoost: number;
   source: "session" | "summary" | "mixed";
   summaryHitCount: number;
+};
+
+export type CachedSessionSummary = {
+  sessionFile: string;
+  mtimeMs: number;
+  summary: SessionSummary;
 };
 
 function ftsTokens(terms: string[]): string[] {
@@ -37,8 +47,10 @@ export class SessionSearchDb {
   private readonly db: Database.Database;
   private readonly insertSessionStmt: Database.Statement;
   private readonly insertSegmentStmt: Database.Statement;
+  private readonly insertCacheStmt: Database.Statement;
   private readonly deleteSessionStmt: Database.Statement;
   private readonly deleteSegmentStmt: Database.Statement;
+  private readonly deleteCacheStmt: Database.Statement;
   private readonly countStmt: Database.Statement;
 
   constructor(dbPath: string) {
@@ -66,7 +78,23 @@ export class SessionSearchDb {
         summaryText,
         tokenize = 'porter unicode61'
       );
+
+      CREATE TABLE IF NOT EXISTS session_cache (
+        sessionFile TEXT PRIMARY KEY,
+        mtimeMs REAL NOT NULL,
+        summaryJson TEXT NOT NULL
+      );
     `);
+
+    const storedVersion = this.db.pragma("user_version", { simple: true }) as number;
+    if (storedVersion !== CACHE_VERSION) {
+      this.db.exec(`
+        DELETE FROM sessions_fts;
+        DELETE FROM summary_segments_fts;
+        DELETE FROM session_cache;
+      `);
+      this.db.pragma(`user_version = ${CACHE_VERSION}`);
+    }
 
     this.insertSessionStmt = this.db.prepare(`
       INSERT INTO sessions_fts(
@@ -90,8 +118,14 @@ export class SessionSearchDb {
       ) VALUES (?, ?, ?, ?)
     `);
 
+    this.insertCacheStmt = this.db.prepare(`
+      INSERT OR REPLACE INTO session_cache(sessionFile, mtimeMs, summaryJson)
+      VALUES (?, ?, ?)
+    `);
+
     this.deleteSessionStmt = this.db.prepare(`DELETE FROM sessions_fts WHERE sessionFile = ?`);
     this.deleteSegmentStmt = this.db.prepare(`DELETE FROM summary_segments_fts WHERE sessionFile = ?`);
+    this.deleteCacheStmt = this.db.prepare(`DELETE FROM session_cache WHERE sessionFile = ?`);
     this.countStmt = this.db.prepare(`SELECT count(*) as count FROM sessions_fts`);
   }
 
@@ -99,7 +133,26 @@ export class SessionSearchDb {
     this.db.close();
   }
 
-  upsert(doc: SessionSearchDocument): void {
+  loadCachedSummaries(): CachedSessionSummary[] {
+    const rows = this.db
+      .prepare(`SELECT sessionFile, mtimeMs, summaryJson FROM session_cache`)
+      .all() as Array<{ sessionFile: string; mtimeMs: number; summaryJson: string }>;
+    const cached: CachedSessionSummary[] = [];
+    for (const row of rows) {
+      try {
+        cached.push({
+          sessionFile: row.sessionFile,
+          mtimeMs: row.mtimeMs,
+          summary: JSON.parse(row.summaryJson) as SessionSummary,
+        });
+      } catch {
+        this.remove(row.sessionFile);
+      }
+    }
+    return cached;
+  }
+
+  upsert(doc: SessionSearchDocument, mtimeMs: number): void {
     const tx = this.db.transaction((input: SessionSearchDocument) => {
       this.deleteSessionStmt.run(input.summary.sessionFile);
       this.deleteSegmentStmt.run(input.summary.sessionFile);
@@ -125,6 +178,8 @@ export class SessionSearchDb {
           text,
         );
       }
+
+      this.insertCacheStmt.run(input.summary.sessionFile, mtimeMs, JSON.stringify(input.summary));
     });
     tx(doc);
   }
@@ -132,6 +187,7 @@ export class SessionSearchDb {
   remove(sessionFile: string): void {
     this.deleteSessionStmt.run(sessionFile);
     this.deleteSegmentStmt.run(sessionFile);
+    this.deleteCacheStmt.run(sessionFile);
   }
 
   search(terms: string[], limit = 400): SearchHit[] {

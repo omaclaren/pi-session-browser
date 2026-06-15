@@ -1094,25 +1094,45 @@ async function parseSessionSummary(sessionFile: string, mtimeMs: number): Promis
   };
 }
 
+export type RefreshStats = {
+  parsed: number;
+  removed: number;
+  fromCache: number;
+};
+
 export class SessionIndex {
   readonly sessionsDir: string;
   readonly indexDbPath: string;
   private readonly entries = new Map<string, SessionIndexEntry>();
   private readonly searchDb: SessionSearchDb;
   private lastIndexedAt?: string;
+  private cachedCount = 0;
+  private refreshChain: Promise<unknown> = Promise.resolve();
 
   constructor(sessionsDir = DEFAULT_SESSIONS_DIR, indexDbPath = DEFAULT_INDEX_DB) {
     this.sessionsDir = sessionsDir;
     this.indexDbPath = indexDbPath;
     this.searchDb = new SessionSearchDb(indexDbPath);
+    for (const cached of this.searchDb.loadCachedSummaries()) {
+      this.entries.set(cached.sessionFile, { mtimeMs: cached.mtimeMs, summary: cached.summary });
+    }
+    this.cachedCount = this.entries.size;
   }
 
   close(): void {
     this.searchDb.close();
   }
 
-  async refresh(): Promise<void> {
+  async refresh(): Promise<RefreshStats> {
+    const next = this.refreshChain.then(() => this.doRefresh());
+    this.refreshChain = next.catch(() => {});
+    return next;
+  }
+
+  private async doRefresh(): Promise<RefreshStats> {
     const seen = new Set<string>();
+    let parsed = 0;
+    let removed = 0;
     for await (const sessionFile of iterSessionFiles(this.sessionsDir)) {
       seen.add(sessionFile);
       const stat = await fs.stat(sessionFile);
@@ -1120,17 +1140,22 @@ export class SessionIndex {
       if (existing && existing.mtimeMs === stat.mtimeMs) continue;
       const doc = await parseSessionSummary(sessionFile, stat.mtimeMs);
       this.entries.set(sessionFile, { mtimeMs: stat.mtimeMs, summary: doc.summary });
-      this.searchDb.upsert(doc);
+      this.searchDb.upsert(doc, stat.mtimeMs);
+      parsed += 1;
     }
 
     for (const sessionFile of Array.from(this.entries.keys())) {
       if (!seen.has(sessionFile)) {
         this.entries.delete(sessionFile);
         this.searchDb.remove(sessionFile);
+        removed += 1;
       }
     }
 
     this.lastIndexedAt = new Date().toISOString();
+    const stats = { parsed, removed, fromCache: this.cachedCount };
+    this.cachedCount = 0;
+    return stats;
   }
 
   private collectSessionResults(options?: { projectId?: string; query?: string; limit?: number; sort?: string }): SessionSearchResult[] {
